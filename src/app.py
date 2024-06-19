@@ -196,10 +196,10 @@ def logout():
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the full paths to the required files
-words_path = os.path.join(base_dir,'src', 'templates', 'words.pkl')
-classes_path = os.path.join(base_dir,'src', 'templates', 'classes.pkl')
-model_path = os.path.join(base_dir,'src', 'templates', 'chatbot_model.h5')
-intents_path = os.path.join(base_dir,'src', 'templates', 'intents.json')
+words_path = os.path.join( 'templates', 'words.pkl')
+classes_path = os.path.join( 'templates', 'classes.pkl')
+model_path = os.path.join( 'templates', 'chatbot_model.h5')
+intents_path = os.path.join( 'templates', 'intents.json')
 
 # Load preprocessed data
 with open(words_path, 'rb') as words_file:
