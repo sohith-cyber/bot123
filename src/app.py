@@ -28,6 +28,8 @@ app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD')
 app.config['MYSQL_DB'] = 'bot'
+app.config['MYSQL_PORT'] = 3306  # Default MySQL port
+
 app.secret_key = os.getenv('SECRET_KEY')
 mysql = MySQL(app)
 
