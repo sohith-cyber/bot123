@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mood Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .right-side-text {
+            position: fixed;
+            top: 300px;
+            right: 200px;
+            max-width: 35%;
+            padding: 20px;
+            font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+            text-align: justify;
+            line-height: 1.9;
+            font-size: 110%;
+        }
+    </style>
+</head>
+<style>
+    body {
+        background: linear-gradient(to left, rgba(191, 211, 81, 0.501), rgba(10, 40, 128, 0.501));
+    }
+</style>
+<body>
+    <div class="mood-tracker-container">
+        <canvas class="emotion-chart" id="emotionChart"></canvas>
+        <div class="legend-container">
+            <ul class="legend">
+                <li><span class="joy"></span> Joy</li>
+                <li><span class="anger"></span> Anger</li>
+                <li><span class="fear"></span> Fear</li>
+                <li><span class="sadness"></span> Sadness</li>
+                <li><span class="surprise"></span> Surprise</li>
+                <li><span class="disgust"></span> Disgust</li>
+            </ul>
+        </div>
+    </div>
+    <div class="right-side-text">
+        Here are your emotion probabilities from the messages you've sent. Navigate to the Monitor Emotions page to see your recorded emotions over time. Keeping track of your emotional well-being is an important step towards self-awareness and personal growth.
+    </div>
+    <script>
+        const messages = JSON.parse(decodeURIComponent('{{ emotion_probabilities | tojson }}'));
+        const ctx = document.getElementById('emotionChart').getContext('2d');
+        const emotionChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: Object.keys(messages),
+                datasets: [{
+                    data: Object.values(messages),
+                    backgroundColor: [
+                        '#FF6384',
+                        '#36A2EB',
+                        '#FFCE56',
+                        '#4BC0C0',
+                        '#9966FF',
+                        '#FF9F40'
+                    ],
+                    cutoutPercentage: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'right',
+                        labels: {
+                            boxWidth: 20,
+                            fontSize: 14,
+                            padding: 10
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+    <div class="dashboard">
+        <img src="{{ url_for('static', filename='images/home-button.png') }}" alt="NotBot" class="notbot-image" onclick="window.location.href='/index'">
+        <div class="dashboard-inner">
+            <div class="dashboard-item">Mood Tracker</div>
+            <div class="dashboard-item" onclick="window.location.href='/monitor_emotions'">Monitor Emotions</div>
+            <div class="dashboard-item" onclick="window.location.href='/therapy'">Therapy</div>
+            <div class="dashboard-item" onclick="window.location.href='/about'">About</div>
+            <div class="dashboard-item" id="accountItem">
+                <img src="{{url_for('static', filename='images/profile.png') }}" alt="User Image">
+                <!-- Display user image only -->
+            </div>
+        </div>
+    </div>
+    <!-- Account dropdown -->
+    <div class="account-dropdown" id="accountDropdown">
+        <div class="username-text">{{ username }}</div>
+        <!-- Display the logged-in username -->
+        <div class="logout" onclick="window.location.href='/logout'">Logout</div>
+        <div class="delete" id="deleteButton">Delete Account</div>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script1.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</body>
+</html>

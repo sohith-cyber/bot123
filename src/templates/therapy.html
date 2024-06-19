@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        body {
+            background: linear-gradient(to left, rgba(191, 211, 81, 0.501), rgba(10, 40, 128, 0.501));
+        }
+
+        .content-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        .song-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .song {
+            display: flex;
+            align-items: center;
+            background-color: #0a0a0a;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 5px;
+            width: 370px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            text-align: left;
+            color: rgb(27, 143, 7);
+            word-wrap: break-word;
+            font-family: Verdana, Geneva, Tahoma, sans-serif;
+            font-size: small;
+        }
+
+        .song-text {
+            flex-grow: 1;
+            padding-left: 10px;
+        }
+
+        .play-button, .pause-button {
+            cursor: pointer;
+            width: 20px;
+            height: 20px;
+            transition: transform 0.1s ease, opacity 0.1s ease;
+        }
+
+        .play-button:active, .pause-button:active {
+            transform: scale(0.9);
+        }
+
+        .therapy-text {
+            margin-left: 500px;
+            margin-top: 50px;
+            text-align: justify;
+            max-width: 600px;
+            font-family: Georgia, 'Times New Roman', Times, serif;
+            line-height: 1.6; /* Increase line spacing */
+            transition: all 0.3s ease-in-out; /* Add transition for smooth animation */
+        }
+        
+        .therapy-text:hover {
+            transform: scale(1.05); /* Slightly scale up on hover */
+            filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.3)); /* Add a subtle drop shadow on hover */
+            padding: 15px;
+        }
+        
+
+        .language-select {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px; /* Increased bottom margin for spacing */
+        }
+        
+        .language-select label {
+            margin-right: 10px;
+            font-weight: bold;
+            color: #0a0a0a; /* White text color for better contrast */
+        }
+        
+        .language-select select {
+            padding: 5px 10px; /* Increased padding for better touch target */
+             /* Green border color */
+            justify-content: center;
+            border-radius: 10px; /* Rounded corners */
+            background-color: #0A0A0A; /* Dark background color */
+            color: #0dbb30; /* White text color */
+            font-size: 14px; /* Larger font size */
+            cursor: pointer;
+            appearance: none;
+            font-family: 'Times New Roman', Times, serif;/* Remove default arrow */
+            
+        }
+        
+        .language-select select:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(27, 143, 7, 0.5); /* Green glow on focus */
+        }
+        
+        .language-select select option {
+            background-color: #070707;
+            color: #47ba0d;
+            padding: 10px;
+            font-size: 12px;
+            font-family: 'Times New Roman', Times, serif;
+        }
+        
+        /* Add styles for the hover effect */
+        .language-select select option.hovered {
+            background-color: #1B8F07; /* Green background color on hover */
+            color: #2da712; /* White text color on hover */
+        }
+        
+    </style>
+</head>
+<body>
+
+    <div class="content-container">
+        <div class="chat-box" id="chatBox"></div>
+    
+        <div class="therapy-text">
+            <p>It's your boy NotBot here, and let me be real with ya'll - I may have graduated with an engineering degree, but that doesn't mean I'm qualified to give y'all medical advice. Nah, fam, that's not my jam. But you know what is? Musical therapy, baby!</p>
+            <div class="language-select">
+                <label for="language">Select Language:</label>
+                <select id="language" onchange="fetchPlaylistTracks()">
+                    <option value="telugu">Telugu</option>
+                    <option value="hindi">Hindi</option>
+                    <option value="tamil">Tamil</option>
+                    <option value="kannada">Kannada</option>
+                    <option value="malayalam">Malayalam</option>
+                    <option value="english" selected>English</option>
+                </select>
+            </div>
+            <p class="language-description">
+               
+                "Yo! Spotify be playin' hard to get, ain't lettin' me drop the full tracks for you. But don't worry, I gotchu with some tasty nibbles to get your mood on the up and up. These previews are like a lil' musical therapy session, designed to lift your spirits and put a spring in your step. They'll have you bouncin' and groovin' like a funky chicken, chasing away those blues and bringin' on the happy vibes. So buckle up, butter cups, and get ready for a musical rollercoaster ride that'll leave you feelin' like a whole new person! Ain't no party like a NotBot party when it comes to mood boosters, amirite?"            </p>
+            </div>
+        </div>
+    </div>
+
+<!-- Input area -->
+
+<div class="dashboard">
+    <img src="{{ url_for('static', filename='images/home-button.png') }}" alt="NotBot" class="notbot-image" onclick="window.location.href='/index'">
+    <div class="dashboard-inner">
+        <div class="dashboard-item" onclick="window.location.href='/mood_tracker'">Mood Tracker</div>
+        <div class="dashboard-item" onclick="window.location.href='/monitor_emotions'">Monitor Emotions</div>
+        <div class="dashboard-item">Therapy</div>
+        <div class="dashboard-item" onclick="window.location.href='/about'">About</div>
+        <div class="dashboard-item" id="accountItem">
+            <img src="{{ url_for('static', filename='images/profile.png') }}" alt="User Image">
+        </div>
+    </div>
+</div>
+
+<!-- Account dropdown -->
+<div class="account-dropdown" id="accountDropdown">
+    <div class="username-text">{{ username }}</div>
+    <div class="logout" onclick="window.location.href='/logout'">Logout</div>
+    <div class="delete" id="deleteButton">Delete Account</div>
+</div>
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+<script src="{{ url_for('static', filename='js/script1.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    let currentAudio = null; // Reference to the currently playing audio element
+
+    // Function to fetch playlist tracks from Spotify API
+    function fetchPlaylistTracks() {
+        const language = document.getElementById('language').value;
+        const playlistNames = {
+            telugu: ['telugu happy playlist', 'telugu calm playlist', 'telugu sad playlist', 'telugu angry playlist'],
+            hindi: ['hindi happy playlist', 'hindi calm playlist', 'hindi sad playlist', 'hindi angry playlist'],
+            tamil: ['tamil happy playlist', 'tamil calm playlist', 'tamil sad playlist', 'tamil angry playlist'],
+            kannada: ['kannada happy playlist', 'kannada calm playlist', 'kannada sad playlist', 'kannada angry playlist'],
+            malayalam: ['malayalam happy playlist', 'malayalam calm playlist', 'malayalam sad playlist', 'malayalam angry playlist'],
+            english: ['happy playlist', 'calm playlist', 'sad playlist', 'angry playlist']
+        };
+
+        
+        const clientId = "{{ spotify_client_id }}";
+        const clientSecret = "{{ spotify_secret_id }}";
+        const tokenEndpoint = 'https://accounts.spotify.com/api/token';
+
+        // Clear the chat box before fetching new tracks
+        const chatBox = document.getElementById('chatBox');
+        chatBox.innerHTML = '';
+
+        // Fetch tracks for each playlist based on the selected language
+        playlistNames[language].forEach(playlistName => {
+            const searchEndpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(playlistName)}&type=playlist`;
+
+            // Fetching access token
+            fetch(tokenEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Authorization': 'Basic ' + btoa(clientId + ':' + clientSecret)
+                },
+                body: 'grant_type=client_credentials'
+            })
+            .then(response => response.json())
+            .then(data => {
+                const accessToken = data.access_token;
+
+                // Searching for playlist by name
+                fetch(searchEndpoint, {
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    const playlistId = data.playlists.items[0].id; // Assuming the first result is the desired playlist
+                    const playlistEndpoint = `https://api.spotify.com/v1/playlists/${playlistId}/tracks`;
+
+                    // Fetching playlist tracks using playlist ID
+                    fetch(playlistEndpoint, {
+                        headers: {
+                            'Authorization': 'Bearer ' + accessToken
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        // Parsing the response and displaying tracks in the chat box
+                        const tracks = data.items.map(item => {
+                            const trackName = item.track.name;
+                            const artist = item.track.artists[0].name;
+                            const previewUrl = item.track.preview_url; // URL for previewing the track
+                            return { name: `${trackName} - ${artist}`, previewUrl };
+                        });
+
+                        tracks.forEach(track => {
+                            const songContainer = document.createElement('div');
+                            songContainer.classList.add('song-container');
+
+                            const songDiv = document.createElement('div');
+                            songDiv.classList.add('song');
+
+                            const playButton = document.createElement('img');
+                            playButton.classList.add('play-button');
+                            playButton.src = "{{ url_for('static', filename='images/play.png') }}"; // Add the path to your play image here
+                            playButton.alt = "Play";
+                            playButton.addEventListener('click', () => toggleSong(track.previewUrl, playButton)); // Add event listener for play button click
+
+                            const songText = document.createElement('div');
+                            songText.classList.add('song-text');
+                            songText.textContent = track.name;
+
+                            songDiv.appendChild(playButton);
+                            songDiv.appendChild(songText);
+                            songContainer.appendChild(songDiv);
+                            chatBox.appendChild(songContainer);
+                        });
+                    })
+                    .catch(error => console.error('Error fetching playlist tracks:', error));
+                })
+                .catch(error => console.error('Error searching for playlist:', error));
+            })
+            .catch(error => console.error('Error fetching access token:', error));
+        });
+    }
+    // Example usage
+    fetchPlaylistTracks('{{ playlist_name }}');
+
+    // Function to play/pause the song
+    function toggleSong(previewUrl, playButton) {
+        if (previewUrl) {
+            // Check if an audio element is already playing
+            if (currentAudio) {
+                // If the current audio element is playing a different song, stop it and play the new one
+                if (currentAudio.src !== previewUrl) {
+                    currentAudio.pause();
+                    currentAudio = new Audio(previewUrl);
+                    currentAudio.play();
+                    updateButtons(playButton);
+                } else {
+                    // If the same song is playing, toggle between play and pause
+                    if (currentAudio.paused) {
+                        currentAudio.play();
+                        playButton.src = "{{ url_for('static', filename='images/pause.png') }}"; // Replace with the path to your pause image
+                        playButton.alt = "Pause";
+                    } else {
+                        currentAudio.pause();
+                        playButton.src = "{{ url_for('static', filename='images/play.png') }}"; // Replace with the path to your play image
+                        playButton.alt = "Play";
+                    }
+                }
+            } else {
+                // If no audio is playing, create a new audio element and play the selected song
+                currentAudio = new Audio(previewUrl);
+                currentAudio.play();
+                updateButtons(playButton);
+            }
+        } else {
+            alert("Preview not available for this track.");
+        }
+    }
+
+    // Function to update play/pause buttons
+    function updateButtons(activeButton) {
+        const buttons = document.querySelectorAll('.play-button');
+        buttons.forEach(button => {
+            button.src = "{{ url_for('static', filename='images/play.png') }}"; // Set all buttons to play image
+            button.alt = "Play";
+        });
+        activeButton.src = "{{ url_for('static', filename='images/pause.png') }}"; // Set the active button to pause image
+        activeButton.alt = "Pause";
+    }
+</script>
+
+</body>
+</html>

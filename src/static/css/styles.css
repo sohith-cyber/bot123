@@ -1,0 +1,766 @@
+/* CSS for the translucent box with curved edges */
+
+
+.chat-box.show {
+    bottom: 45px;
+    left: 100px; /* Final position above the bottom */
+}
+
+#messagesContainer {
+    overflow-y: auto; /* Enable scrolling if content exceeds container height */
+}
+
+.message {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    overflow: auto; /* Hide overflow content */
+}
+
+.user-message {
+    background-color: #e2f7cb; /* Light green */
+    display: flex; /* Make the message container a flex container */
+    align-items: center; /* Align items vertically */
+    max-width: 100%; /* Adjust maximum width as needed */
+    margin-left: 125px; /* Adjust margin */
+    margin-right: -20px; /* Auto margin for right side */
+    padding: 10px; /* Allow padding to adjust dynamically based on content */
+    border-radius: 10px; /* Adjust maximum width as needed */
+    word-wrap: break-word; /* Allow word wrapping */
+    font-family:Verdana, Geneva, Tahoma, sans-serif;
+    font-size: small;
+}
+
+.bot-message {
+    background-color: #c7d2fe; /* Light blue */
+    display: flex; /* Make the message container a flex container */
+    align-items: center; /* Align items vertically */
+    max-width: 70%; /* Adjust maximum width as needed */
+    margin-left: 0px; /* Adjust margin */
+    margin-right: -10px; /* Auto margin for right side */
+    padding: 10px;
+    border-radius: 10px;
+    font-family:Verdana, Geneva, Tahoma, sans-serif;
+    font-size: small;
+
+}
+
+.user-image {
+    width: 30px; /* Set the width of the image */
+    height: 30px; /* Set the height of the image */
+    margin-right: 10px; /* Add margin to the right */
+    filter: none; /* Position the image 10px away from the right edge */
+}
+
+.bot-image {
+    width: 30px; /* Set the width of the image */
+    height: 30px; /* Set the height of the image */
+    margin-left: -10px;
+    margin-right: 10px; /* Add margin to the left */
+    filter: none; /* Position the image 10px away from the left edge */
+}
+
+#messagesContainer {
+    overflow-y: auto; /* Enable scrolling if content exceeds container height */
+    padding-right: 40px; /* Add padding to the right to accommodate images */
+}
+
+/* ... (same as before) */
+
+.input-area {
+    margin-top: auto; /* Push input area to the bottom */
+    position: sticky; /* Position the input area sticky */
+    bottom: 10; /* Stick it to the bottom */
+    background-color: rgba(255, 255, 255, 0.9); /* Semi-transparent background */
+    padding: 10px;
+    box-sizing: border-box;
+    display: flex; /* Make the input area a flex container */
+    align-items: center;
+    border-radius: 10px;
+    border: 1px solid #ccc; /* Align items vertically */
+}
+
+.input-field {
+    flex: 1; /* Take up remaining space */
+    padding: 10px;
+    border-radius: 25px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+    margin-right: 10px; /* Adjust margin as needed */
+    word-wrap: break-word; /* Allow word wrapping */
+}
+
+.record-button {
+    width: 40px; /* Adjust the width as needed */
+    height: 40px; /* Adjust the height as needed */
+    border-radius: 50%; /* Make the buttons circular */
+    border: none;
+    background-color: #f44336; /* Red color */
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    margin-left: 10px; /* Adjust margin as needed */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.record-button img {
+    width: 24px; /* Adjust the image size as needed */
+    height: 24px;
+    filter:none; /* Adjust the image size as needed */
+}
+
+.send-button {
+    width: 40px; /* Adjust the width as needed */
+    height: 40px; /* Adjust the height as needed */
+    border-radius: 50%; /* Make the buttons circular */
+    border: none;
+    background-color: #4caf50; /* Green */
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    margin-left: 10px; /* Adjust margin as needed */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.send-button img {
+    width: 24px; /* Adjust the image size as needed */
+    height: 24px;
+    filter:none; /* Adjust the image size as needed */
+}
+
+.send-button:hover {
+    background-color: #45a049; /* Darker green */
+}
+
+.record-button {
+    background-color: #f44336; /* Red color */
+}
+
+.record-button:hover {
+    background-color: #d32f2f; /* Darker red */
+}
+
+/* Assuming the body is the parent element */
+body {
+    position: relative;
+    background-color: hsl(0, 0%, calc(70% - 20%)); /* Darker grey */ /* Make the body a reference point for absolutely positioned children */
+    min-height: 100vh; /* Ensure the body takes at least the full viewport height */
+    margin: 0; /* Remove default margins */
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    position: relative; /* Remove default padding */
+}
+
+body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    
+    filter: blur(10px); /* Adjust the blur radius as needed */
+    z-index: -1; /* Ensure the background stays behind the content */
+}
+
+.content {
+    z-index: 1;
+    color: white;
+    text-align: center;
+    position: relative;
+}
+
+
+
+/* Chat box styling */
+.chat-box {
+    width: 450px;
+    max-width: 80%;
+    height: 700px;
+    max-height: 90%;
+    background-color: rgba(13, 12, 12, 0.8);
+    border-radius: 20px;
+    position: absolute;
+    bottom: -700px; /* Adjusted to ensure space for forms */
+    right: 100px;
+    z-index: 1;
+    overflow-y: auto;
+    padding: 20px;
+    box-sizing: border-box;
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    transition: bottom 0.5s ease;
+}
+
+
+/* Add this to your CSS file */
+body, html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.mood-tracker-container {
+  
+  position: absolute; /* Change to absolute positioning */
+    top: 200px; /* Specify the top position */
+    left: 50px; /* Specify the left position */
+    width: 500px; /* Fixed width */
+    height: 500px; /* Fixed height */
+    /* Background color with opacity */
+    border-radius: 10px; /* Rounded corners */
+    padding: 20px; /* Padding inside the container */
+    box-sizing: border-box; /* Include padding in the total width and height */
+    display: flex;
+    justify-content: center;
+    align-items: center; /* Example color, adjust as needed */
+}
+
+.emotion-chart {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+
+/* ... (same as before) */
+/* Account dropdown styling */
+/* ... (same as before) */
+
+/* Account dropdown styling */
+.account-dropdown {
+  display: none;
+  position: absolute;
+  top: 80px;
+  right: 5px;
+  background-color: rgba(168, 168, 168, 0.8);
+  border: 1px solid rgba(204, 204, 204, 0.8);
+  padding: 10px;
+  border-radius: 5px;
+  z-index: 9999;
+  animation: slideDown 0.5s ease-in-out;
+  backdrop-filter: blur(700px);
+  -webkit-backdrop-filter: blur(40px);
+  
+}
+
+@keyframes slideDown {
+  from {
+      opacity: 0;
+      transform: translateY(-20px);
+  }
+  to {
+      opacity: 1;
+      transform: translateY(0);
+  }
+}
+
+.logout, .delete {
+  cursor: pointer;
+  padding: 5px;
+  color: rgb(6, 6, 6);
+  transition: transform 0.2s, background-color 0.2s; /* Add transition for pressing animation */
+}
+
+
+
+.logout:active, .delete:active {
+  background-color: #393838; /* Change background color on press */
+  transform: scale(0.95); /* Add a pressing effect */
+}
+
+
+
+.username-text {
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: rgb(5, 5, 5);
+}
+.dashboard {
+  position: fixed;
+  top: 20px;
+  left: 0;
+  right: 0;
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  display: flex;
+  justify-content: center; /* Center the dashboard items */
+  align-items: center; /* Center vertically */
+  box-shadow: 0px 5px 15px rgba(0, 0, 0, 0.3); /* Add shadow effect */
+}
+
+.dashboard-inner {
+  display: flex;
+  justify-content: flex-end; /* Align items to the right */
+  align-items: center; /* Center vertically */
+  width: 100%; /* Ensure the inner container spans the full width */
+  max-width: 1200px;
+  font-family: Verdana, Geneva, Tahoma, sans-serif; /* Adjust the maximum width as needed */
+}
+
+.vertical-line {
+  position: fixed;
+  right: 300px;
+  top: 90;
+  bottom: 90px;
+  width: 3px;
+  height: 600px;
+  background-color: black;
+  box-shadow: -2px 0 5px rgba(0, 0, 0, 0.5);
+  transition: box-shadow 0.3s ease;
+}
+
+.vertical-line:hover {
+  box-shadow: -2px 0 15px rgba(0, 0, 0, 0.7);
+}
+
+.phone-number {
+  position: relative;
+  display: inline-block;
+}
+
+.phone-number span {
+  visibility: hidden;
+  
+  color: #0b0a0a;
+  width: 20px;
+  border-radius: 6px;
+  padding: 5px;
+  position: absolute;
+  z-index: 1;
+  bottom: 30px;
+  left: 120px;
+  margin-left: -60px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.social-icons img {
+  transition: transform 0.2s; /* Add transition for smooth animation */
+}
+
+.social-icons img:not(.phone-number img):active {
+  transform: scale(0.9); /* Scale down on active (pressed) state */
+}
+
+.phone-number:hover span {
+  visibility: visible;
+  opacity: 1;
+}
+
+.social-icons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: absolute;
+  top: 33%; /* Position at the vertical center */
+  
+  right: 150px; /* Adjust spacing from the right */
+}
+
+.social-icons img {
+  width: 40px; /* Adjust size as needed */
+  margin-bottom: 40px; /* Increase space between icons */
+  cursor: pointer;
+}
+.dashboard-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px; /* Add some padding for better spacing */
+  margin: 0 15px; /* Adjust spacing between items */
+  cursor: pointer;
+  color: #000;
+  position: relative;
+  transition: color 0.3s, background-color 0.3s, transform 0.5s; /* Add transition effect for color change and transform */
+  text-decoration: none; /* Remove default underline */
+}
+
+.dashboard-item:hover {
+  color: #fff; /* Change text color on hover */
+   /* Change background color on hover */
+  transform: scale(1.05); /* Slightly scale up the item */
+}
+
+.dashboard-item img {
+  width: 30px; /* Adjust the size as needed */
+  height: 30px; /* Adjust the size as needed */
+  border-radius: 50%;
+}
+
+.dashboard-item:hover::after {
+  width: 100%; /* Full width */
+  height: 1px; /* Height of underline */
+  background-color: #000; /* Underline color on hover */
+  transition: width 0.3s, background-color 0.3s; /* Add transition effect for width and background color */
+}
+
+.dashboard-item:hover::after {
+  background-color: #000; /* Change background color on hover */
+}
+
+.dashboard-item:hover {
+  color: #000; /* Change text color on hover */
+}
+.dashboard-item img {
+  width: 30px; /* Adjust the size as needed */
+  height: 30px; /* Adjust the size as needed */
+  border-radius: 50%;
+  margin-right: 10px;
+}
+
+
+
+.notbot-image {
+    margin-right: auto; /* Pushes the image to the left */
+    margin-left: 15px; /* Add some left margin for spacing */
+    height: 35px;
+    cursor: pointer;
+    transition: transform 0.1s; /* Adjust height as needed */
+}
+
+.notbot-image:active {
+  transform: scale(0.80);
+}
+
+/* Sign-up form positioning */
+
+
+/* style.css */
+
+.image-button {
+    cursor: pointer; /* Change cursor to indicate it's clickable */
+    border: none; /* Remove default button borders */
+    background-color: transparent; /* Make the background transparent */
+    width: 100px; /* Set the width */
+    height: 100px; /* Set the height */
+    object-fit: cover; /* Cover the entire area of the button */
+     /* Position the button relative to the viewport */
+     top: 500px; /* Distance from the top of the viewport */
+     left: 20px; /* Distance from the left of the viewport */
+}
+
+.sliding-window {
+    display: none; /* Hidden by default */
+    position: fixed; /* Fixed position */
+    top: 0; /* Top position */
+    left: 0; /* Left position */
+    width: 200px; /* Width of the sliding window */
+    height: 100%; /* Full height */
+    background-color: #f9f9f9; /* Background color */
+    overflow-x: hidden; /* Prevent horizontal scroll */
+    padding-top: 60px; /* Space for the button */
+    transition: 0.5s; /* Animation duration */
+}
+
+.sliding-window ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+
+.sliding-window li {
+    padding: 20px;
+    cursor: pointer;
+}
+
+.sliding-window li:hover {
+    background-color: #ddd;
+}
+
+
+
+
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 60vh;
+    width: 150vh; /* Added to center the form vertically */
+}
+
+.form-box {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 1);
+    max-width: 400px; /* Added to limit the maximum width of the form */
+    width: 100%;
+}
+
+.button-box {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.toggle-btn {
+    background-color: #f2f2f2;
+    color: #333;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.toggle-btn.active {
+    background-color: #3a7bd5; /* Changed the color to match the image */
+    color: #fff;
+}
+
+.input-field {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.forgot-password {
+    display: block;
+    text-align: right;
+    margin-bottom: 10px;
+    color: #3a7bd5; /* Changed the color to match the image */
+    text-decoration: none;
+}
+
+.login-btn {
+    width: 100%;
+    padding: 10px;
+    background-color: #3a7bd5; /* Changed the color to match the image */
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.signup-btn {
+    width: 100%;
+    padding: 10px;
+    background-color: #3a7bd5; /* Changed the color to match the image */
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.hidden {
+    display: none; /* Added to hide the signup form initially */
+}
+
+/* Define your custom styles here */
+
+.login-form {
+    background-color: blue;
+  }
+  
+  @import url('https://fonts.googleapis.com/css?family=Montserrat:400,800&display=swap');
+
+  :root {
+    --welcome-back-x: 20%;
+    --welcome-back-y: 25%;
+    --welcome-back-height: 50%;
+    --welcome-back-width: 30%;
+    --create-account-x: 50%;
+    --create-account-y: 25%;
+    --create-account-height: 50%;
+    --create-account-width: 30%;
+  }
+  
+  body {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 800;
+  }
+  
+  .welcome-back, .create-account {
+    padding: 40px;
+    box-sizing: border-box;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+  }
+  
+  .welcome-back {
+    background-color:rgba(250, 142, 60, 0.738);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    border-top-left-radius: 20px;
+    border-bottom-left-radius: 20px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  
+  .welcome-back .btn {
+    background-color: linear-gradient(to right, #ff416c, #ff4b2b);
+    color: white;
+    border: 2px solid white; /* Curved line around the button */
+    padding: 0.5rem 1.5rem;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    font-size: 1em;
+    border-radius: 25px;
+    font-weight: bold;
+    text-decoration: none;
+    position: relative; /* Ensure the position is relative to the parent */
+    top: 40px; /* Adjust as needed */
+    left: 5px; /* Remove underline */
+  }
+  
+  
+  .welcome-back .btn:active {
+    transform: scale(0.90);
+  }
+  
+  .create-account {
+    background: rgb(190, 188, 188);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-top-right-radius: 20px;
+    border-bottom-right-radius: 20px;
+    font-size: x-large;
+  }
+  
+  h2 {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 800;
+  }
+  
+  span {
+    font-size: 0.9em;
+    color: #999;
+    margin-bottom: 20px;
+    display: block;
+  }
+  
+  .text-danger {
+    color: rgb(16, 16, 16);
+    font-size: small;
+  }
+  
+  .btn-lg {
+    padding: 10px 20px;
+    font-size: 1em;
+  }
+  
+  .btn-light {
+    background: #fff;
+    color: #7f7371;
+    border: none;
+  }
+  
+  .btn-light:hover {
+    background: #f7f7f7;
+  }
+  
+  .btn-danger {
+    background: #ff4b2b;
+    border: none;
+  }
+  
+  .btn-danger:hover {
+    background: #ff416c;
+  }
+  
+  .d-flex {
+    display: flex;
+  }
+  
+  .vh-100 {
+    height: 100vh;
+  }
+  
+  .position-absolute {
+    position: absolute;
+  }
+  
+  .no-gutters {
+    margin-right: 0;
+    margin-left: 0;
+  }
+  
+  .row {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .register-form {
+    max-width: 600px;
+    margin: auto;
+  }
+  
+  .form-control {
+    border: none;
+    border-bottom: 1px solid #ccc;
+    border-radius: 0;
+    padding: 10px 0 10px 15px;
+    background-color: #f5f5f5;
+    font-size: 16px;
+    color: #333;
+    transition: border-color 0.3s ease;
+    margin-bottom: 20px;
+    width: 100%;
+  }
+  
+  .form-control:focus {
+    border-color: #1a1919;
+    outline: none;
+    background-color: rgb(251, 251, 250);
+  }
+  
+  .form-control::placeholder {
+    color: #999;
+  }
+  
+  .border-bottom {
+    border-bottom: 1px solid #ccc !important;
+  }
+  
+  .border-dark {
+    border-color: #000 !important;
+  }
+  
+  .mb-4 {
+    margin-bottom: 2rem !important;
+  }
+  
+  .btn-custom {
+    background-color: rgba(250, 142, 60, 0.738);
+    color: black;
+    font-weight: bold;
+    font-size: 0.9rem;
+    padding: 0.5rem 1.5rem;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+  }
+  
+  .create-account .btn-custom {
+    position: relative;
+    top: -10px;
+    left: 95px;
+  }
+  
+  .btn-custom:active {
+    transform: scale(0.95);
+  }
+  
+ 
+  
+  .rounded-pill {
+    border-radius: 25px;
+  }
+  

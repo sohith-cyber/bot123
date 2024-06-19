@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <title>Monitor Emotions</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            background: linear-gradient(to left, rgba(191, 211, 81, 0.501), rgba(10, 40, 128, 0.501));
+        }
+        
+        .table-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            position: relative;
+        }
+        
+        .table-wrapper {
+            max-height: 500px;
+            overflow-y: auto;
+            position: absolute;
+            left: 20px;
+            top: 200px;
+            width: 1200px;
+            max-width: 1400px;
+        }
+        
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            max-width: 700px;
+            background-color: linear-gradient(to right, #ff416c, #ff4b2b);
+        }
+        
+        th {
+            position: sticky;
+            top: 0;
+            background-color:  black;
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+        }
+        
+        td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+            font-family: 'Courier New', Courier, monospace;
+            background-color: grey;
+        }
+        
+        tr:hover {
+            background-color: #979595;
+        }
+
+        .chart-container {
+            position: absolute;
+            top: 170px;
+            right: 800px;
+            width: 700px;
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <img src="{{ url_for('static', filename='images/home-button.png') }}" alt="NotBot" class="notbot-image" onclick="window.location.href='/index'">
+        <div class="dashboard-inner">
+            <div class="dashboard-item" onclick="navigateToMoodTracker(`{{ userMessages|tojson|safe }}`)">Mood Tracker</div>
+            <div class="dashboard-item">Monitor Emotions</div>
+            <div class="dashboard-item" onclick="window.location.href='/therapy'">Therapy</div>
+            <div class="dashboard-item" onclick="window.location.href='/about'">About</div>
+            <div class="dashboard-item" id="accountItem">
+                <img src="{{url_for('static', filename='images/profile.png')  }}" alt="User Image"> <!-- Display user image only -->
+            </div>
+        </div>
+    </div>
+   <!-- Account dropdown -->
+   <div class="account-dropdown" id="accountDropdown">
+    <div class="username-text">{{ username }}</div> <!-- Display the logged-in username -->
+    <div class="logout" onclick="window.location.href='/logout'">Logout</div>
+    <div class="delete" id="deleteButton">Delete Account</div>
+</div>
+    <div class="table-container">
+        <div class="table-wrapper">
+            <table>
+                <tr>
+                    <th>ID</th>
+                    <th>Date</th>
+                    <th>Emotion Probability</th>
+                </tr>
+                {% for row in emotion_data %}
+                <tr>
+                    <td>{{ row[0] }}</td>
+                    <td>{{ row[1] }}</td>
+                    <td>{{ row[2] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+    <div class="chart-container">
+        <canvas id="emotionBarChart"></canvas>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script1.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            fetch('/get_emotion_data')
+                .then(response => response.json())
+                .then(data => {
+                    const labels = data.map(entry => entry.date);
+                    const positiveData = data.map(entry => entry.positive);
+                    const negativeData = data.map(entry => entry.negative);
+
+                    const ctx = document.getElementById('emotionBarChart').getContext('2d');
+                    new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: 'Positive',
+                                    data: positiveData,
+                                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                                    borderColor: 'rgba(75, 192, 192, 1)',
+                                    borderWidth: 1
+                                },
+                                {
+                                    label: 'Negative',
+                                    data: negativeData,
+                                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                                    borderColor: 'rgba(255, 99, 132, 1)',
+                                    borderWidth: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            scales: {
+                                y: {
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+                })
+                .catch(error => console.error('Error fetching emotion data:', error));
+        });
+    </script>
+</body>
+</html>

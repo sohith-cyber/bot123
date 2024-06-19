@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        body {
+            background: linear-gradient(to left, rgba(191, 211, 81, 0.501), rgba(10, 40, 128, 0.501));
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        
+        .text-section {
+            max-width: 800px;
+            padding: 20px;
+            margin-left: 200px;
+            margin-top: 270px;
+            font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            text-align: justify;
+            font-size: large;
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+        
+        .text-section.visible {
+            opacity: 1;
+        }
+        
+        .text-section p {
+            margin-bottom: 15px;
+        }
+        .contact-us {
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+            position: relative;
+            top: 230px;
+            left:-120px;
+            font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif; /* Adjust this value to move the text up or down */
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+</head>
+<body>
+    <div class="text-section">
+        <p>Our website has a chatbot that talks with users and analyzes their messages to figure out their emotions. This helps the chatbot respond with care, making conversations more personal and meaningful.</p>
+        <p>We believe technology can help us understand and support each other better. By adding emotion prediction to our chatbot, we want to create a platform that not only helps users but also cares about their feelings.</p>
+        <p>We see a future where technology helps build emotional connections and well-being. Our website already has a voice message feature, and soon we will also predict emotions through voice. Join us to explore how technology and emotions can come together, making our website a friendly place for meaningful interactions and support.</p>
+    </div>
+
+    <!-- Add font awesome icons -->
+    <div class="dashboard">
+        <img src="{{ url_for('static', filename='images/home-button.png') }}" alt="NotBot" class="notbot-image" onclick="window.location.href='/index'">
+        <div class="dashboard-inner">
+            <div class="dashboard-item" onclick="window.location.href='/mood_tracker'">Mood Tracker</div>
+            <div class="dashboard-item" onclick="window.location.href='/monitor_emotions'">Monitor Emotions</div>
+            <div class="dashboard-item" onclick="window.location.href='/therapy'">Therapy</div>
+            <div class="dashboard-item">About</div>
+            <div class="dashboard-item" id="accountItem">
+                <img src="{{url_for('static', filename='images/profile.png') }}" alt="User Image">
+                <!-- Display user image only -->
+            </div>
+        </div>
+    </div>
+    <!-- Account dropdown -->
+    <div class="account-dropdown" id="accountDropdown">
+        <div class="username-text">{{ username }}</div>
+        <!-- Display the logged-in username -->
+        <div class="logout" onclick="window.location.href='/logout'">Logout</div>
+        <div class="delete" id="deleteButton">Delete Account</div>
+    </div>
+    <div class="vertical-line"></div>
+    <div class="contact-us">Contact Us</div>
+    <div class="social-icons">
+        <div class="phone-number">
+            <img src="{{ url_for('static', filename='images/phone.png') }}" alt="Phone" onclick="showPhoneNumber(this)">
+            <span class="phone-tooltip">9494785196</span>
+        </div>
+        <img src="{{ url_for('static', filename='images/email.png') }}" alt="Email" onclick="window.location.href='mailto:velagalakshman15@gmail.com'" id="emailIcon">
+        <img src="{{ url_for('static', filename='images/linkedin.jpg') }}" alt="LinkedIn" onclick="window.open('https://www.linkedin.com/in/velaga-lakshman-8921b4302/', '_blank')" id="linkedinIcon">
+        <img src="{{ url_for('static', filename='images/instagram.png') }}" alt="Instagram" onclick="window.open('https://www.instagram.com/v__lakshman?igsh=aWZtY283ZXlwNDJu', '_blank')" id="instagramIcon">
+        <img src="{{ url_for('static', filename='images/x.png') }}" alt="Twitter" onclick="window.open('https://x.com/Lakhan89967732?t=qiq62sZLbAyT47LcEHRV1g&s=08', '_blank')" id="twitterIcon">
+    </div>
+    <script>
+        function showPhoneNumber(icon) {
+            var phoneTooltip = icon.nextElementSibling;
+            phoneTooltip.style.visibility = "visible";
+            phoneTooltip.style.opacity = 1;
+        }
+
+        // Add event listeners for social media icons
+        var emailIcon = document.getElementById('emailIcon');
+        var linkedinIcon = document.getElementById('linkedinIcon');
+        var instagramIcon = document.getElementById('instagramIcon');
+        var twitterIcon = document.getElementById('twitterIcon');
+
+        emailIcon.addEventListener('mouseover', function() {
+            emailIcon.title = 'Email';
+        });
+        emailIcon.addEventListener('mouseout', function() {
+            emailIcon.title = '';
+        });
+
+        linkedinIcon.addEventListener('mouseover', function() {
+            linkedinIcon.title = 'LinkedIn';
+        });
+        linkedinIcon.addEventListener('mouseout', function() {
+            linkedinIcon.title = '';
+        });
+
+        instagramIcon.addEventListener('mouseover', function() {
+            instagramIcon.title = 'Instagram';
+        });
+        instagramIcon.addEventListener('mouseout', function() {
+            instagramIcon.title = '';
+        });
+
+        twitterIcon.addEventListener('mouseover', function() {
+            twitterIcon.title = 'Twitter';
+        });
+        twitterIcon.addEventListener('mouseout', function() {
+            twitterIcon.title = '';
+        });
+    </script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script1.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        window.addEventListener('load', function() {
+            var textSection = document.querySelector('.text-section');
+            textSection.classList.add('visible');
+        });
+    </script>
+</body>
+</html>

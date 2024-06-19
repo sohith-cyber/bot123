@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify Playlist Player</title>
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
+</head>
+<body>
+
+<h2>Enter Spotify Playlist Name:</h2>
+<input type="text" id="playlistName">
+<button onclick="getPlaylist()">Get Playlist</button>
+
+<h2>Playlist Songs:</h2>
+<select id="songs" size="10" onchange="playSong()">
+</select>
+
+<script>
+  // Function to obtain access token using Client Credentials Flow
+  function getAccessToken(callback) {
+    var clientId = 'c06bdc4eb7b946c587896c564cafb26c'; // Replace with your client ID
+    var clientSecret = 'dbf7343db5bf48e28b790e94ab676a94'; // Replace with your client secret
+    var authString = btoa(clientId + ':' + clientSecret);
+
+    fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Basic ' + authString,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: 'grant_type=client_credentials'
+    })
+    .then(response => response.json())
+    .then(data => {
+      var accessToken = data.access_token;
+      callback(accessToken);
+    })
+    .catch(error => console.error('Error:', error));
+  }
+
+  // Function to get playlist using obtained access token
+  function getPlaylist() {
+    var playlistName = document.getElementById('playlistName').value;
+    getAccessToken(function(accessToken) {
+      fetch(`https://api.spotify.com/v1/search?q=${playlistName}&type=playlist`, {
+        headers: {
+          'Authorization': 'Bearer ' + accessToken
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        var playlistId = data.playlists.items[0].id;
+        return fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+          headers: {
+            'Authorization': 'Bearer ' + accessToken
+          }
+        });
+      })
+      .then(response => response.json())
+      .then(data => {
+        var songsList = document.getElementById('songs');
+        songsList.innerHTML = '';
+        data.items.forEach(item => {
+          var option = document.createElement('option');
+          option.text = item.track.name;
+          option.value = item.track.preview_url;
+          songsList.appendChild(option);
+        });
+      })
+      .catch(error => console.error('Error:', error));
+    });
+  }
+
+  // Function to play selected song
+  function playSong() {
+    var selectedSongUrl = document.getElementById('songs').value;
+    if (selectedSongUrl) {
+      var audio = new Audio(selectedSongUrl);
+      audio.play();
+    } else {
+      alert('No song selected!');
+    }
+  }
+</script>
+
+</body>
+</html>
