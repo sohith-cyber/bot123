@@ -18,6 +18,7 @@ import datetime
 import os
 from dotenv import load_dotenv
 from emotion import predict_emotion_list
+from urllib.parse import urlparse
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
