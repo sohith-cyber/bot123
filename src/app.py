@@ -24,11 +24,14 @@ CORS(app)
 load_dotenv()
 
 # MySQL Configuration
-app.config['MYSQL_HOST'] = 'localhost'
-app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD')
-app.config['MYSQL_DB'] = 'bot'
-app.config['MYSQL_PORT'] = 3306  # Default MySQL port
+database_url = os.getenv('DATABASE_URL')
+url = urlparse(database_url)
+
+app.config['MYSQL_HOST'] = url.hostname
+app.config['MYSQL_USER'] = url.username
+app.config['MYSQL_PASSWORD'] = url.password
+app.config['MYSQL_DB'] = url.path[1:]
+app.config['MYSQL_PORT'] = url.port or 3306
 
 app.secret_key = os.getenv('SECRET_KEY')
 mysql = MySQL(app)
