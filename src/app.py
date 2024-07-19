@@ -28,7 +28,7 @@ app = Flask(__name__, static_url_path='/static')
 CORS(app)
 
 # Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:Velaga%4096@localhost:3306/bot'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:Velaga%4096@127.0.0.1:3306/bot'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = os.getenv('SECRET_KEY', 'fallback_secret_key')
 
