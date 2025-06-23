@@ -1,105 +1,209 @@
-// index.js
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 
-import {
-  DynamoDBClient,
-  QueryCommand
-} from "@aws-sdk/client-dynamodb";
+// Initialize AWS clients
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || "eu-west-1" });
+const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || "eu-west-1" });
 
-import {
-  LambdaClient,
-  InvokeCommand
-} from "@aws-sdk/client-lambda";
+// Constants
+const RESPONSE_TYPES = {
+    SUCCESS: "001",
+    ERROR: "000"
+};
 
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import staffMapping from './staffMapping.js';
+const UNASSIGNED_STAFF_VALUES = ["NULL", "UNASSIGNED", "NA", "", null, undefined];
 
-const client = new DynamoDBClient({ region: "eu-west-1" });
-const lambdaClient = new LambdaClient({ region: "eu-west-1" });
+const ERROR_MESSAGES = {
+    FETCH_ERROR: "ERROR occurred in fetching application details",
+    TRANSFER_ERROR: "ERROR occurred in transferring application", 
+    ASSIGNMENT_ERROR: "ERROR: Failed to assign application",
+    EXCEPTION_ERROR: "ERROR: failed to assign application to staff. Exception occurred",
+    ALREADY_ASSIGNED: "This application has already been assigned to another staff. Refresh the page to see updated data"
+};
 
-export const assignLeadApp = async (event) => {
-  let responseBody;
-  let statusCode = "200";
+const SUCCESS_MESSAGES = {
+    ASSIGNED: "This application is assigned to you"
+};
 
-  try {
-    console.log("Incoming event:", JSON.stringify(event));
-
-    // Parse event body
-    const eventBody = JSON.parse(event.body || "{}");
-    const { newStaffId, appId } = eventBody;
-
-    if (!newStaffId || !appId) {
-      throw new Error("Missing required fields: newStaffId or appId");
-    }
-
-    // Step 1: Query existing assignment
-    const queryParams = {
-      TableName: "APP_DETAILS",
-      KeyConditionExpression: "#APP_ID = :appId",
-      ExpressionAttributeNames: {
-        "#APP_ID": "APP_ID"
-      },
-      ExpressionAttributeValues: {
-        ":appId": { S: appId }
-      },
-      ProjectionExpression: "STF_ID"
-    };
-
-    const queryCommand = new QueryCommand(queryParams);
-    const queryResult = await client.send(queryCommand);
-
-    const items = queryResult.Items?.map(item => unmarshall(item)) || [];
-    const existingStaff = items[0]?.STF_ID;
-
-    // Step 2: Check if already assigned
-    if (
-      existingStaff === undefined ||
-      existingStaff === null ||
-      ["NULL", "UNASSIGNED", "NA"].includes(existingStaff) ||
-      (typeof existingStaff === "string" && existingStaff.trim().length === 0)
-    ) {
-      // Step 3: Invoke transferAppLMS Lambda
-      const invokeCommand = new InvokeCommand({
-        FunctionName: "transferAppLMS",
-        Payload: new TextEncoder().encode(JSON.stringify(event))
-      });
-
-      const invokeResult = await lambdaClient.send(invokeCommand);
-      const payload = JSON.parse(new TextDecoder().decode(invokeResult.Payload));
-
-      // Step 4: Handle response from invoked Lambda
-      const respType = JSON.parse(payload.body)?.respType;
-
-      if (respType === "001") {
-        responseBody = {
-          respType: "001",
-          response: "This application is assigned to you"
-        };
-      } else {
-        responseBody = {
-          respType: "000",
-          response: "ERROR: Failed to assign application"
-        };
-      }
-    } else {
-      responseBody = {
-        respType: "000",
-        response: "This application has already been assigned to another staff. Refresh the page to view updates."
-      };
-    }
-  } catch (error) {
-    console.error("Error occurred:", error.stack);
-    responseBody = {
-      respType: "000",
-      response: "ERROR: Failed to assign application to staff. Exception occurred."
-    };
-  }
-
-  return {
-    statusCode,
+/**
+ * Creates a standardized HTTP response
+ * @param {Object} responseBody - The response body object
+ * @returns {Object} Formatted HTTP response
+ */
+const createResponse = (responseBody) => ({
+    statusCode: 200,
     headers: {
-      "Access-Control-Allow-Origin": "*"
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json"
     },
     body: JSON.stringify(responseBody),
     isBase64Encoded: false
-  };
+});
+
+/**
+ * Creates a standardized response body
+ * @param {string} respType - Response type (SUCCESS or ERROR)
+ * @param {string} message - Response message
+ * @returns {Object} Response body object
+ */
+const createResponseBody = (respType, message) => ({
+    respType,
+    response: message
+});
+
+/**
+ * Queries DynamoDB for application details
+ * @param {string} appId - Application ID
+ * @returns {Promise<Object>} Query result
+ */
+const queryApplicationDetails = async (appId) => {
+    const params = {
+        TableName: process.env.APP_DETAILS_TABLE || "APP_DETAILS",
+        KeyConditionExpression: "#APP_ID = :appId",
+        ExpressionAttributeNames: {
+            "#APP_ID": "APP_ID"
+        },
+        ExpressionAttributeValues: {
+            ":appId": appId
+        },
+        ProjectionExpression: "STF_ID",
+        Select: "SPECIFIC_ATTRIBUTES"
+    };
+
+    const command = new QueryCommand(params);
+    return await docClient.send(command);
+};
+
+/**
+ * Invokes the transfer application Lambda function
+ * @param {Object} payload - Payload to send to the function
+ * @returns {Promise<Object>} Lambda invocation result
+ */
+const invokeTransferFunction = async (payload) => {
+    const params = {
+        FunctionName: process.env.TRANSFER_FUNCTION_NAME || "transferAppLMS",
+        Payload: JSON.stringify(payload)
+    };
+
+    const command = new InvokeCommand(params);
+    return await lambdaClient.send(command);
+};
+
+/**
+ * Checks if staff value indicates unassigned status
+ * @param {*} staffValue - Staff ID value to check
+ * @returns {boolean} True if unassigned
+ */
+const isStaffUnassigned = (staffValue) => {
+    return UNASSIGNED_STAFF_VALUES.includes(staffValue) || 
+           (typeof staffValue === 'string' && staffValue.length === 0);
+};
+
+/**
+ * Processes the transfer function response
+ * @param {Object} transferResult - Result from transfer Lambda
+ * @param {number} count - Number of records processed
+ * @returns {Object} Response body
+ */
+const processTransferResult = (transferResult, count) => {
+    try {
+        // Parse the Lambda response payload
+        const payloadString = Buffer.from(transferResult.Payload).toString();
+        const response = JSON.parse(payloadString);
+        const responseBody = JSON.parse(response.body);
+
+        if (responseBody.respType === RESPONSE_TYPES.SUCCESS) {
+            if (count === 1) {
+                return createResponseBody(RESPONSE_TYPES.SUCCESS, SUCCESS_MESSAGES.ASSIGNED);
+            } else {
+                return createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.ASSIGNMENT_ERROR);
+            }
+        } else {
+            return createResponseBody(RESPONSE_TYPES.ERROR, responseBody.response || ERROR_MESSAGES.TRANSFER_ERROR);
+        }
+    } catch (parseError) {
+        console.error("Error parsing transfer result:", parseError);
+        return createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.EXCEPTION_ERROR);
+    }
+};
+
+/**
+ * Main Lambda handler function
+ * @param {Object} event - Lambda event object
+ * @param {Object} context - Lambda context object
+ * @returns {Promise<Object>} HTTP response
+ */
+export const handler = async (event, context) => {
+    console.log("Received event:", JSON.stringify(event, null, 2));
+
+    try {
+        // Parse event body
+        let eventBody;
+        try {
+            eventBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+        } catch (parseError) {
+            console.error("Error parsing event body:", parseError);
+            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Invalid request body"));
+        }
+
+        const { newStaffId, appId } = eventBody;
+
+        // Validate required fields
+        if (!appId) {
+            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Application ID is required"));
+        }
+
+        // Query application details from DynamoDB
+        let queryResult;
+        try {
+            queryResult = await queryApplicationDetails(appId);
+            console.log("Query result:", JSON.stringify(queryResult, null, 2));
+        } catch (dbError) {
+            console.error("Database query error:", dbError);
+            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.FETCH_ERROR));
+        }
+
+        // Check if application exists
+        if (!queryResult.Items || queryResult.Items.length === 0) {
+            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Application not found"));
+        }
+
+        const existingStaff = queryResult.Items[0].STF_ID;
+        
+        // Check if staff is already assigned
+        if (isStaffUnassigned(existingStaff)) {
+            try {
+                // Invoke transfer function
+                const transferResult = await invokeTransferFunction(eventBody);
+                console.log("Transfer result:", JSON.stringify(transferResult, null, 2));
+
+                // Process the transfer result
+                const responseBody = processTransferResult(transferResult, queryResult.Count);
+                return createResponse(responseBody);
+
+            } catch (lambdaError) {
+                console.error("Lambda invocation error:", lambdaError);
+                return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.TRANSFER_ERROR));
+            }
+        } else {
+            // Staff already assigned
+            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.ALREADY_ASSIGNED));
+        }
+
+    } catch (error) {
+        console.error("Unexpected error:", error);
+        return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.EXCEPTION_ERROR));
+    }
+};
+
+// Optional: Export for testing
+export { 
+    queryApplicationDetails, 
+    invokeTransferFunction, 
+    isStaffUnassigned, 
+    processTransferResult,
+    createResponse,
+    createResponseBody
 };
