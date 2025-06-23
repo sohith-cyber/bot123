@@ -1,1 +1,105 @@
-hlo test
+// index.js
+
+import {
+  DynamoDBClient,
+  QueryCommand
+} from "@aws-sdk/client-dynamodb";
+
+import {
+  LambdaClient,
+  InvokeCommand
+} from "@aws-sdk/client-lambda";
+
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import staffMapping from './staffMapping.js';
+
+const client = new DynamoDBClient({ region: "eu-west-1" });
+const lambdaClient = new LambdaClient({ region: "eu-west-1" });
+
+export const assignLeadApp = async (event) => {
+  let responseBody;
+  let statusCode = "200";
+
+  try {
+    console.log("Incoming event:", JSON.stringify(event));
+
+    // Parse event body
+    const eventBody = JSON.parse(event.body || "{}");
+    const { newStaffId, appId } = eventBody;
+
+    if (!newStaffId || !appId) {
+      throw new Error("Missing required fields: newStaffId or appId");
+    }
+
+    // Step 1: Query existing assignment
+    const queryParams = {
+      TableName: "APP_DETAILS",
+      KeyConditionExpression: "#APP_ID = :appId",
+      ExpressionAttributeNames: {
+        "#APP_ID": "APP_ID"
+      },
+      ExpressionAttributeValues: {
+        ":appId": { S: appId }
+      },
+      ProjectionExpression: "STF_ID"
+    };
+
+    const queryCommand = new QueryCommand(queryParams);
+    const queryResult = await client.send(queryCommand);
+
+    const items = queryResult.Items?.map(item => unmarshall(item)) || [];
+    const existingStaff = items[0]?.STF_ID;
+
+    // Step 2: Check if already assigned
+    if (
+      existingStaff === undefined ||
+      existingStaff === null ||
+      ["NULL", "UNASSIGNED", "NA"].includes(existingStaff) ||
+      (typeof existingStaff === "string" && existingStaff.trim().length === 0)
+    ) {
+      // Step 3: Invoke transferAppLMS Lambda
+      const invokeCommand = new InvokeCommand({
+        FunctionName: "transferAppLMS",
+        Payload: new TextEncoder().encode(JSON.stringify(event))
+      });
+
+      const invokeResult = await lambdaClient.send(invokeCommand);
+      const payload = JSON.parse(new TextDecoder().decode(invokeResult.Payload));
+
+      // Step 4: Handle response from invoked Lambda
+      const respType = JSON.parse(payload.body)?.respType;
+
+      if (respType === "001") {
+        responseBody = {
+          respType: "001",
+          response: "This application is assigned to you"
+        };
+      } else {
+        responseBody = {
+          respType: "000",
+          response: "ERROR: Failed to assign application"
+        };
+      }
+    } else {
+      responseBody = {
+        respType: "000",
+        response: "This application has already been assigned to another staff. Refresh the page to view updates."
+      };
+    }
+  } catch (error) {
+    console.error("Error occurred:", error.stack);
+    responseBody = {
+      respType: "000",
+      response: "ERROR: Failed to assign application to staff. Exception occurred."
+    };
+  }
+
+  return {
+    statusCode,
+    headers: {
+      "Access-Control-Allow-Origin": "*"
+    },
+    body: JSON.stringify(responseBody),
+    isBase64Encoded: false
+  };
+};
