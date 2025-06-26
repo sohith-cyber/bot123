@@ -1,209 +1,282 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-// Initialize AWS clients
-const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || "eu-west-1" });
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
-const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || "eu-west-1" });
+// Initialize AWS SDK v3 clients
+const lambdaClient = new LambdaClient({});
+const dynamoDBClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(dynamoDBClient);
 
-// Constants
-const RESPONSE_TYPES = {
-    SUCCESS: "001",
-    ERROR: "000"
+export const handler = async (event, context) => {
+    try {
+        let role = null;
+        let staffId = null;
+        let channelId = null;
+        let dateString = null;
+        let ddbStaffMappingList = [];
+        let temp = [];
+
+        const startDate = event.queryStringParameters?.startDate || null;
+        const endDate = event.queryStringParameters?.endDate || null;
+
+        console.log("startDate:", startDate);
+        console.log("endDate:", endDate);
+
+        // Get staff details
+        const staffDetails = await getStaffDetails(event.queryStringParameters?.staffId);
+        
+        if (!staffDetails.response || !staffDetails.response.isExist) {
+            return createResponse({
+                respType: "e000",
+                response: "Agent does not exist. Please add agent before proceeding"
+            });
+        }
+
+        role = staffDetails.response.role;
+        staffId = staffDetails.response.stfrd;
+        channelId = staffDetails.response.channelId;
+
+        const rangeDate = new Date();
+        dateString = rangeDate.toISOString();
+
+        // Fetch applications by role
+        ddbStaffMappingList = await fetchAppByRole(role, staffId, channelId, temp);
+
+        // Call QueryAppDetailsLMSS Lambda
+        const eventQueryAppDetails = {
+            ddbStaffMappingList,
+            staffId,
+            dateString,
+            channelId,
+            role,
+            startDate,
+            endDate
+        };
+
+        const appData = await callQueryAppDetailsLambda(eventQueryAppDetails);
+
+        return createResponse({
+            respType: "001",
+            response: "success",
+            role,
+            appData
+        });
+
+    } catch (error) {
+        console.error("Lambda execution error:", error);
+        return createErrorResponse(error);
+    }
 };
 
-const UNASSIGNED_STAFF_VALUES = ["NULL", "UNASSIGNED", "NA", "", null, undefined];
+// Get staff details from another Lambda function
+const getStaffDetails = async (staffId) => {
+    const params = {
+        FunctionName: "getStaffDetailsLMS",
+        InvocationType: "RequestResponse",
+        LogType: "Tail",
+        Payload: JSON.stringify({
+            queryStringParameters: { staffId }
+        })
+    };
 
-const ERROR_MESSAGES = {
-    FETCH_ERROR: "ERROR occurred in fetching application details",
-    TRANSFER_ERROR: "ERROR occurred in transferring application", 
-    ASSIGNMENT_ERROR: "ERROR: Failed to assign application",
-    EXCEPTION_ERROR: "ERROR: failed to assign application to staff. Exception occurred",
-    ALREADY_ASSIGNED: "This application has already been assigned to another staff. Refresh the page to see updated data"
+    try {
+        const command = new InvokeCommand(params);
+        const data = await lambdaClient.send(command);
+        
+        const dataItems = JSON.parse(new TextDecoder().decode(data.Payload));
+        console.log("dataItems:", dataItems);
+        
+        const resp = JSON.parse(dataItems.body);
+        console.log("resp:", resp);
+        
+        return resp;
+    } catch (error) {
+        console.error("Error getting staff details:", error);
+        throw error;
+    }
 };
 
-const SUCCESS_MESSAGES = {
-    ASSIGNED: "This application is assigned to you"
+// Main function to fetch applications based on role
+const fetchAppByRole = async (role, staffId, channelId, temp) => {
+    switch (role) {
+        case "TM":
+            return [{ "STF_ID": staffId }];
+        case "TL":
+            return await queryStaffMappingTL(staffId);
+        case "CM":
+            return await queryStaffMappingCM(channelId);
+        case "PU":
+            return await scanStaffMappingPU(temp);
+        default:
+            throw new Error("Role is not authorized to perform any action.");
+    }
 };
 
-/**
- * Creates a standardized HTTP response
- * @param {Object} responseBody - The response body object
- * @returns {Object} Formatted HTTP response
- */
-const createResponse = (responseBody) => ({
-    statusCode: 200,
+// Query staff mapping for Team Leader role
+const queryStaffMappingTL = async (staffId) => {
+    const staffList = [];
+    
+    // Query primary staff mapping
+    const primaryStaff = await queryWithPagination({
+        TableName: "STF_MAPPING",
+        KeyConditionExpression: "#STF_ID = :stfId",
+        ExpressionAttributeNames: { "#STF_ID": "STF_ID" },
+        ExpressionAttributeValues: { ":stfId": staffId },
+        ProjectionExpression: "STF_ID"
+    });
+    
+    staffList.push(...primaryStaff);
+    
+    // Query staff mapping by manager ID
+    const managedStaff = await queryWithPagination({
+        TableName: "STF_MAPPING",
+        IndexName: "MGR_ID-index",
+        KeyConditionExpression: "#MGR_ID = :stfId",
+        ExpressionAttributeNames: { "#MGR_ID": "MGR_ID" },
+        ExpressionAttributeValues: { ":stfId": staffId },
+        ProjectionExpression: "STF_ID"
+    });
+    
+    staffList.push(...managedStaff);
+    
+    return staffList;
+};
+
+// Query staff mapping for Channel Manager role
+const queryStaffMappingCM = async (channelId) => {
+    const staffList = await scanWithPagination({
+        TableName: "STF_MAPPING",
+        FilterExpression: "CHANNEL_ID = :channelId AND (#ROLE = :roleTM OR #ROLE = :roleTL)",
+        ExpressionAttributeNames: { "#ROLE": "ROLE" },
+        ExpressionAttributeValues: {
+            ":channelId": channelId,
+            ":roleTM": "TM",
+            ":roleTL": "TL"
+        },
+        ProjectionExpression: "STF_ID,MGR_ID"
+    });
+
+    // Group staff by manager ID
+    return staffList.reduce((acc, item) => {
+        const { MGR_ID, STF_ID } = item;
+        acc[MGR_ID] = acc[MGR_ID] || [];
+        acc[MGR_ID].push({ STF_ID });
+        return acc;
+    }, {});
+};
+
+// Scan staff mapping for Power User role
+const scanStaffMappingPU = async (temp) => {
+    const channelList = await scanWithPagination({
+        TableName: "CHNL_MAPPING",
+        ProjectionExpression: "CHANNEL_ID"
+    });
+
+    // Filter unique channel IDs
+    channelList.forEach(item => {
+        if (item.CHANNEL_ID && !temp.includes(item.CHANNEL_ID)) {
+            temp.push(item.CHANNEL_ID);
+        }
+    });
+
+    return channelList;
+};
+
+// Generic function for DynamoDB Query with pagination
+const queryWithPagination = async (params) => {
+    const items = [];
+    let lastEvaluatedKey = null;
+
+    do {
+        const queryParams = { ...params };
+        if (lastEvaluatedKey) {
+            queryParams.ExclusiveStartKey = lastEvaluatedKey;
+        }
+
+        try {
+            const command = new QueryCommand(queryParams);
+            const data = await docClient.send(command);
+            
+            items.push(...data.Items);
+            lastEvaluatedKey = data.LastEvaluatedKey;
+        } catch (error) {
+            console.error("Error in queryWithPagination:", error);
+            throw error;
+        }
+    } while (lastEvaluatedKey);
+
+    return items;
+};
+
+// Generic function for DynamoDB Scan with pagination
+const scanWithPagination = async (params) => {
+    const items = [];
+    let lastEvaluatedKey = null;
+
+    do {
+        const scanParams = { ...params };
+        if (lastEvaluatedKey) {
+            scanParams.ExclusiveStartKey = lastEvaluatedKey;
+        }
+
+        try {
+            const command = new ScanCommand(scanParams);
+            const data = await docClient.send(command);
+            
+            items.push(...data.Items);
+            lastEvaluatedKey = data.LastEvaluatedKey;
+        } catch (error) {
+            console.error("Error in scanWithPagination:", error);
+            throw error;
+        }
+    } while (lastEvaluatedKey);
+
+    return items;
+};
+
+// Call another Lambda function
+const callQueryAppDetailsLambda = async (eventQueryAppDetails) => {
+    const params = {
+        FunctionName: "QueryAppDetailsLMSS",
+        InvocationType: "RequestResponse",
+        LogType: "Tail",
+        Payload: JSON.stringify(eventQueryAppDetails)
+    };
+
+    try {
+        const command = new InvokeCommand(params);
+        const data = await lambdaClient.send(command);
+        
+        return JSON.parse(new TextDecoder().decode(data.Payload));
+    } catch (error) {
+        console.error("QueryAppDetailsLMS encountered error:", error);
+        throw error;
+    }
+};
+
+// Create successful response
+const createResponse = (responseBody, statusCode = 200) => ({
+    statusCode,
     headers: {
         "Access-Control-Allow-Origin": "*",
-        "Content-Type": "application/json"
+        "Access-Control-Allow-Headers": "Cache-Control",
+        "Cache-Control": "no-cache, no-store, must-revalidate"
     },
     body: JSON.stringify(responseBody),
     isBase64Encoded: false
 });
 
-/**
- * Creates a standardized response body
- * @param {string} respType - Response type (SUCCESS or ERROR)
- * @param {string} message - Response message
- * @returns {Object} Response body object
- */
-const createResponseBody = (respType, message) => ({
-    respType,
-    response: message
+// Create error response
+const createErrorResponse = (error, statusCode = 500) => ({
+    statusCode,
+    headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Cache-Control",
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+    },
+    body: JSON.stringify({
+        error: error.message || "Internal server error",
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    }),
+    isBase64Encoded: false
 });
-
-/**
- * Queries DynamoDB for application details
- * @param {string} appId - Application ID
- * @returns {Promise<Object>} Query result
- */
-const queryApplicationDetails = async (appId) => {
-    const params = {
-        TableName: process.env.APP_DETAILS_TABLE || "APP_DETAILS",
-        KeyConditionExpression: "#APP_ID = :appId",
-        ExpressionAttributeNames: {
-            "#APP_ID": "APP_ID"
-        },
-        ExpressionAttributeValues: {
-            ":appId": appId
-        },
-        ProjectionExpression: "STF_ID",
-        Select: "SPECIFIC_ATTRIBUTES"
-    };
-
-    const command = new QueryCommand(params);
-    return await docClient.send(command);
-};
-
-/**
- * Invokes the transfer application Lambda function
- * @param {Object} payload - Payload to send to the function
- * @returns {Promise<Object>} Lambda invocation result
- */
-const invokeTransferFunction = async (payload) => {
-    const params = {
-        FunctionName: process.env.TRANSFER_FUNCTION_NAME || "transferAppLMS",
-        Payload: JSON.stringify(payload)
-    };
-
-    const command = new InvokeCommand(params);
-    return await lambdaClient.send(command);
-};
-
-/**
- * Checks if staff value indicates unassigned status
- * @param {*} staffValue - Staff ID value to check
- * @returns {boolean} True if unassigned
- */
-const isStaffUnassigned = (staffValue) => {
-    return UNASSIGNED_STAFF_VALUES.includes(staffValue) || 
-           (typeof staffValue === 'string' && staffValue.length === 0);
-};
-
-/**
- * Processes the transfer function response
- * @param {Object} transferResult - Result from transfer Lambda
- * @param {number} count - Number of records processed
- * @returns {Object} Response body
- */
-const processTransferResult = (transferResult, count) => {
-    try {
-        // Parse the Lambda response payload
-        const payloadString = Buffer.from(transferResult.Payload).toString();
-        const response = JSON.parse(payloadString);
-        const responseBody = JSON.parse(response.body);
-
-        if (responseBody.respType === RESPONSE_TYPES.SUCCESS) {
-            if (count === 1) {
-                return createResponseBody(RESPONSE_TYPES.SUCCESS, SUCCESS_MESSAGES.ASSIGNED);
-            } else {
-                return createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.ASSIGNMENT_ERROR);
-            }
-        } else {
-            return createResponseBody(RESPONSE_TYPES.ERROR, responseBody.response || ERROR_MESSAGES.TRANSFER_ERROR);
-        }
-    } catch (parseError) {
-        console.error("Error parsing transfer result:", parseError);
-        return createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.EXCEPTION_ERROR);
-    }
-};
-
-/**
- * Main Lambda handler function
- * @param {Object} event - Lambda event object
- * @param {Object} context - Lambda context object
- * @returns {Promise<Object>} HTTP response
- */
-export const handler = async (event, context) => {
-    console.log("Received event:", JSON.stringify(event, null, 2));
-
-    try {
-        // Parse event body
-        let eventBody;
-        try {
-            eventBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-        } catch (parseError) {
-            console.error("Error parsing event body:", parseError);
-            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Invalid request body"));
-        }
-
-        const { newStaffId, appId } = eventBody;
-
-        // Validate required fields
-        if (!appId) {
-            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Application ID is required"));
-        }
-
-        // Query application details from DynamoDB
-        let queryResult;
-        try {
-            queryResult = await queryApplicationDetails(appId);
-            console.log("Query result:", JSON.stringify(queryResult, null, 2));
-        } catch (dbError) {
-            console.error("Database query error:", dbError);
-            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.FETCH_ERROR));
-        }
-
-        // Check if application exists
-        if (!queryResult.Items || queryResult.Items.length === 0) {
-            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, "Application not found"));
-        }
-
-        const existingStaff = queryResult.Items[0].STF_ID;
-        
-        // Check if staff is already assigned
-        if (isStaffUnassigned(existingStaff)) {
-            try {
-                // Invoke transfer function
-                const transferResult = await invokeTransferFunction(eventBody);
-                console.log("Transfer result:", JSON.stringify(transferResult, null, 2));
-
-                // Process the transfer result
-                const responseBody = processTransferResult(transferResult, queryResult.Count);
-                return createResponse(responseBody);
-
-            } catch (lambdaError) {
-                console.error("Lambda invocation error:", lambdaError);
-                return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.TRANSFER_ERROR));
-            }
-        } else {
-            // Staff already assigned
-            return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.ALREADY_ASSIGNED));
-        }
-
-    } catch (error) {
-        console.error("Unexpected error:", error);
-        return createResponse(createResponseBody(RESPONSE_TYPES.ERROR, ERROR_MESSAGES.EXCEPTION_ERROR));
-    }
-};
-
-// Optional: Export for testing
-export { 
-    queryApplicationDetails, 
-    invokeTransferFunction, 
-    isStaffUnassigned, 
-    processTransferResult,
-    createResponse,
-    createResponseBody
-};
