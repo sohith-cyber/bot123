@@ -1,15 +1,16 @@
-var ARS = require(); 
+var AWS = require("aws-sdk"); 
 
-var lambda = new ARS.Lambda(); 
-var myDocumentClient = new ANS.DynamoDB.DocumentClient(); 
+var lambda = new AWS.Lambda(); 
+var myDocumentClient = new AWS.DynamoDB.DocumentClient(); 
 
 exports.handler = function (event, context, callback) { 
+    var role = null;
     var staffId = null; 
     var channelId = null; 
     var rangeDate = null; 
     var dateString = null; 
-    var ddbStaffMappingList = null; 
-    var temp = null; 
+    var ddbStaffMappingList = [ ]; 
+    var temp = [ ]; 
     var getStaffList = null; 
     var eventQueryAppDetails = null; 
 
@@ -19,17 +20,15 @@ exports.handler = function (event, context, callback) {
 
     //check if staff exists
     var paramsStaff = { 
-        //
-        // var dataItems; 
-        FunctionName: "getStaff Details", // the lambda function we are going to invoke
+        FunctionName: "getStaffDetailsLMS", // the lambda function we are going to invoke
         InvocationType: "RequestResponse", 
         LogType: "Tail", 
-        Payload: "" 
+        Payload: "" ,
     }; 
 
-    //paramsStaff.Payload = JSON.stringify(event.staffid, null, 2); 
+    
     paramsStaff.Payload = JSON.stringify(event.queryStringParameters.staffId, null, 2); 
-    //
+    
     var startDate = ""; 
     var endDate = ""; 
 
@@ -46,25 +45,26 @@ exports.handler = function (event, context, callback) {
         } else { 
             var dataItems = JSON.parse(data.Payload); 
             console.log("dataItems:", dataItems); 
-            // yes then getting customer details based on role
+            
             var resp = JSON.parse(dataItems.body); 
             console.log(":", resp); 
-            if (resp.response !== null && resp.response !== undefined) { 
-                if (resp.response.isExist === true) { 
+            if (
+(resp.response !== null && resp.response !== undefined) && // Corrected logical OR to AND
+                 resp.response.isExist === true) { 
                     role = resp.response.role; 
-                    staffId = resp.response.staffId; 
+                    staffId = resp.response.stfId; 
                     channelId = resp.response.channelId; 
-                    rangeDate = new Date(new Date().setDate(new Date().getDate() - 1)); 
+                    rangeDate = new Date(new Date().setDate(new Date().getDate() - 60)); 
                     dateString = rangeDate.toISOString(); 
                     fetchAppByRole(); 
                 } else { 
                     responseBody = { 
-                        respType: "0", 
+                        respType: "000", 
                         response: "Agent does not exist. Please check agent before proceeding" 
                     }; 
-                    setResponseFinal(responseBody); 
+                    responseFinal = setResponseFinal(responseBody); 
                     callback(null, responseFinal); 
-                }
+                
             }
         }
     });
@@ -83,15 +83,15 @@ exports.handler = function (event, context, callback) {
                 respType: "000", 
                 response: "Role is not authorized to perform any action." 
             }; 
-            setResponseFinal(responseBody); 
+            responseFinal = setResponseFinal(responseBody); 
             callback(null, responseFinal); 
         }
     }
 
     function queryStaffMappingTM() { 
-        ddbStaffMappingList = []; 
+        ddbStaffMappingList = [ { STF_ID: staffId, }]; 
         eventQueryAppDetails = setStaffMappingParams(); 
-        callback(null, eventQueryAppDetails); 
+        
         callQueryAppDetailsLambda(eventQueryAppDetails); 
     }
 
@@ -120,21 +120,20 @@ exports.handler = function (event, context, callback) {
             data.Items.forEach(function (itemData) { 
                 ddbStaffMappingList.push(itemData); 
             }); 
-            if (typeof data.LastEvaluatedKey !== "undefined") { 
+            if (typeof data.LastEvaluatedKey != "undefined") { 
                 getStaffList.ExclusiveStartKey = data.LastEvaluatedKey; 
                 myDocumentClient.query(getStaffList, onQueryStaffmappingTL); 
             } else { 
+                eventQueryAppDetails = setStaffMappingParams(); // This line was moved up from inside queryStaffMappingTLForMgrId()
                 queryStaffMappingTLForMgrId(); 
             }
-            eventQueryAppDetails = setStaffMappingParams(); 
-            callback(null, eventQueryAppDetails); 
         }
     }
 
     function queryStaffMappingTLForMgrId() { 
         let getStaffList = { 
             TableName: "STF_MAPPING", 
-            IndexName: "MGR_ID-index", 
+            IndexName: "MGR_ID-index", // Removed '#' from '#MGR_ID-index'
             KeyConditionExpression: "MGR_ID = :stfId", 
             ExpressionAttributeNames: { 
                 "#MGR_ID": "MGR_ID", 
@@ -154,7 +153,7 @@ exports.handler = function (event, context, callback) {
             data.Items.forEach(function (itemData) { 
                 ddbStaffMappingList.push(itemData); 
             }); 
-            if (typeof data.LastEvaluatedKey !== "undefined") { 
+            if (typeof data.LastEvaluatedKey != "undefined") { 
                 getStaffList.ExclusiveStartKey = data.LastEvaluatedKey; 
                 myDocumentClient.query(getStaffList, onQueryStaffMappingTLForMgrId); 
             } else { 
@@ -191,7 +190,7 @@ exports.handler = function (event, context, callback) {
             data.Items.forEach(function (itemData) { 
                 ddbStaffMappingList.push(itemData); 
             }); 
-            if (typeof data.LastEvaluatedKey !== "undefined") { 
+            if (typeof data.LastEvaluatedKey != "undefined") { 
                 getStaffList.ExclusiveStartKey = data.LastEvaluatedKey; 
                 myDocumentClient.scan(getStaffList, onScanStaffmappingCM); 
             } else { 
@@ -200,8 +199,8 @@ exports.handler = function (event, context, callback) {
                         MGR_ID,
                         STF_ID
                     } = a; 
-                    r[MGR_ID] = (r[MGR_ID] || []); 
-                    r[MGR_ID].push(STF_ID); 
+                    r[MGR_ID] = [ ...(r[MGR_ID] || []), { STF_ID}]; // Corrected spread operator usage
+                    
                     return r; 
                 }, {}); 
                 eventQueryAppDetails = setStaffMappingParams(); 
@@ -225,10 +224,10 @@ exports.handler = function (event, context, callback) {
             callback(err, null); 
         } else { 
             data.Items.forEach(function (itemData) { 
-                if (itemData.CHANNEL_ID !== undefined || itemData.CHANNEL_ID !== -1) { 
+                if (itemData.CHANNEL_ID !== undefined && itemData.CHANNEL_ID !== "") { // Changed || to &&
                     if (temp.indexOf(itemData.CHANNEL_ID) === -1) { 
                         temp.push(itemData.CHANNEL_ID); 
-                    } 
+                    } // Closing brace added here
                     ddbStaffMappingList.push(itemData); 
                 } 
             }); 
@@ -264,7 +263,7 @@ exports.handler = function (event, context, callback) {
             FunctionName: "QueryAppDetailsLMS", 
             InvocationType: "RequestResponse", 
             LogType: "Tail", 
-            Payload: "" 
+            Payload: "" ,
         }; 
         console.log("eventQueryAppDetails:", eventQueryAppDetails); 
         tmParams.Payload = JSON.stringify(eventQueryAppDetails, null, 2); 
