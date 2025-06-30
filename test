@@ -1,7 +1,7 @@
 var AWS = require("aws-sdk"); 
 
 var lambda = new AWS.Lambda(); 
-var myDocumentClient = new AWS.DynamoDB.DocumentClient(); 
+var myDocumentClient = new ANS.DynamoDB.DocumentClient(); 
 
 exports.handler = function (event, context, callback) { 
     var role = null;
@@ -20,6 +20,8 @@ exports.handler = function (event, context, callback) {
 
     //check if staff exists
     var paramsStaff = { 
+        //
+        // var dataItems; 
         FunctionName: "getStaffDetailsLMS", // the lambda function we are going to invoke
         InvocationType: "RequestResponse", 
         LogType: "Tail", 
@@ -49,7 +51,7 @@ exports.handler = function (event, context, callback) {
             var resp = JSON.parse(dataItems.body); 
             console.log(":", resp); 
             if (
-(resp.response !== null && resp.response !== undefined) && // Corrected logical OR to AND
+(resp.response !== null | | resp.response !== undefined) 
                  resp.response.isExist === true) { 
                     role = resp.response.role; 
                     staffId = resp.response.stfId; 
@@ -89,7 +91,7 @@ exports.handler = function (event, context, callback) {
     }
 
     function queryStaffMappingTM() { 
-        ddbStaffMappingList = [ { STF_ID: staffId, }]; 
+        ddbStaffMappingList = [ { STF_ID: staffId, },]; 
         eventQueryAppDetails = setStaffMappingParams(); 
         
         callQueryAppDetailsLambda(eventQueryAppDetails); 
@@ -124,16 +126,17 @@ exports.handler = function (event, context, callback) {
                 getStaffList.ExclusiveStartKey = data.LastEvaluatedKey; 
                 myDocumentClient.query(getStaffList, onQueryStaffmappingTL); 
             } else { 
-                eventQueryAppDetails = setStaffMappingParams(); // This line was moved up from inside queryStaffMappingTLForMgrId()
-                queryStaffMappingTLForMgrId(); 
+    eventQueryAppDetails = setStaffMappingParams();             queryStaffMappingTLForMgrId(); 
             }
+            
+            
         }
     }
 
     function queryStaffMappingTLForMgrId() { 
         let getStaffList = { 
             TableName: "STF_MAPPING", 
-            IndexName: "MGR_ID-index", // Removed '#' from '#MGR_ID-index'
+            IndexName: "#MGR_ID-index", 
             KeyConditionExpression: "MGR_ID = :stfId", 
             ExpressionAttributeNames: { 
                 "#MGR_ID": "MGR_ID", 
@@ -199,7 +202,7 @@ exports.handler = function (event, context, callback) {
                         MGR_ID,
                         STF_ID
                     } = a; 
-                    r[MGR_ID] = [ ...(r[MGR_ID] || []), { STF_ID}]; // Corrected spread operator usage
+                    r[MGR_ID] = [ . . . (r[MGR_ID] || []), { STF_ID,}];
                     
                     return r; 
                 }, {}); 
@@ -224,12 +227,12 @@ exports.handler = function (event, context, callback) {
             callback(err, null); 
         } else { 
             data.Items.forEach(function (itemData) { 
-                if (itemData.CHANNEL_ID !== undefined && itemData.CHANNEL_ID !== "") { // Changed || to &&
+                if (itemData.CHANNEL_ID !== undefined || itemData.CHANNEL_ID !== "") { 
                     if (temp.indexOf(itemData.CHANNEL_ID) === -1) { 
                         temp.push(itemData.CHANNEL_ID); 
-                    } // Closing brace added here
+                    
                     ddbStaffMappingList.push(itemData); 
-                } 
+                } }
             }); 
             if (typeof data.LastEvaluatedKey !== "undefined") { 
                 getStaffList.ExclusiveStartKey = data.LastEvaluatedKey; 
