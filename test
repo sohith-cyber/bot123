@@ -1,7 +1,11 @@
+// index.js (or whatever your main Lambda file is named)
+
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 
+// Initialize AWS SDK v3 clients
+// Region and credentials are automatically picked up from Lambda execution environment
 const lambda = new LambdaClient({});
 const dynamoDbClient = new DynamoDBClient({});
 const myDocumentClient = DynamoDBDocumentClient.from(dynamoDbClient);
@@ -13,78 +17,112 @@ export const handler = async (event) => {
     let rangeDate = null;
     let dateString = null;
     let ddbStaffMappingList = [];
-    let tempChannelIds = []; // Renamed 'temp' to be more descriptive
-    let getStaffListParams = null; // Renamed to avoid confusion with the function
+    let tempChannelIds = []; // Renamed 'temp' for clarity to avoid confusion with general temporary variables
 
-    // final response format
-    let responseBody = null;
+    // Input parameters from event (assuming API Gateway proxy integration)
+    const startDate = event.queryStringParameters?.startDate; // Use optional chaining for safety
+    const endDate = event.queryStringParameters?.endDate;
+    const inputStaffId = event.queryStringParameters?.staffId;
 
-    const startDate = event.queryStringParameters.startDate;
-    const endDate = event.queryStringParameters.endDate;
-
-    console.log("startDate:", startDate);
-    console.log("endDate:", endDate);
+    console.log("Input Staff ID:", inputStaffId);
+    console.log("Start Date:", startDate);
+    console.log("End Date:", endDate);
 
     try {
-        // Check if staff exists
+        // --- Step 1: Check if staff exists by invoking getStaffDetailsLMS Lambda ---
+        if (!inputStaffId) {
+            console.error("Missing staffId in query parameters.");
+            return setResponseFinal({
+                respType: "000",
+                response: "Staff ID is required."
+            }, 400); // Bad Request
+        }
+
         const paramsStaff = {
             FunctionName: "getStaffDetailsLMS",
-            InvocationType: "RequestResponse",
-            LogType: "Tail",
-            Payload: JSON.stringify(event.queryStringParameters.staffId),
+            InvocationType: "RequestResponse", // Synchronous invocation
+            LogType: "Tail", // Optional: to get logs from invoked lambda
+            Payload: JSON.stringify(inputStaffId), // Payload should be stringified
         };
 
-        console.log("paramsStaff:", paramsStaff);
+        console.log("Invoking getStaffDetailsLMS with params:", paramsStaff);
         const lambdaInvokeResponse = await lambda.send(new InvokeCommand(paramsStaff));
-        const dataItems = JSON.parse(Buffer.from(lambdaInvokeResponse.Payload).toString()); // SDK v3 returns Payload as Uint8Array
-        console.log("dataItems:", dataItems);
 
+        // SDK v3 Payload is a Uint8Array, convert to string, then parse JSON
+        const dataItems = JSON.parse(Buffer.from(lambdaInvokeResponse.Payload).toString());
+        console.log("Raw response from getStaffDetailsLMS:", dataItems);
+
+        // The body of the invoked Lambda's response is itself a stringified JSON
         const resp = JSON.parse(dataItems.body);
-        console.log("Response from getStaffDetailsLMS:", resp);
+        console.log("Parsed response from getStaffDetailsLMS:", resp);
 
+        // Validate staff existence and extract details
         if (resp.response && resp.response.isExist === true) {
             role = resp.response.role;
             staffId = resp.response.stfId;
             channelId = resp.response.channelId;
-            rangeDate = new Date(new Date().setDate(new Date().getDate() - 60));
-            dateString = rangeDate.toISOString();
+            rangeDate = new Date(new Date().setDate(new Date().getDate() - 60)); // 60 days prior to current date
+            dateString = rangeDate.toISOString(); // ISO 8601 format
 
-            await fetchAppByRole(); // Await the async function
+            console.log(`Staff found: Role=${role}, StaffId=${staffId}, ChannelId=${channelId}`);
+            console.log("Calculated dateString (60 days ago):", dateString);
+
+            // --- Step 2: Fetch staff mapping based on role ---
+            await fetchAppByRole(role); // Pass role for clarity
+
         } else {
-            responseBody = {
+            console.warn("Agent does not exist or invalid response from getStaffDetailsLMS.");
+            return setResponseFinal({
                 respType: "000",
                 response: "Agent does not exist. Please check agent before proceeding"
-            };
-            return setResponseFinal(responseBody);
+            });
         }
     } catch (err) {
-        console.error("Error in main handler:", err);
-        return onError(err);
+        console.error("Error in main handler execution:", err);
+        return onError(err); // Return error response
     }
 
-    async function fetchAppByRole() {
-        if (role === "TM") {
-            ddbStaffMappingList = [{ STF_ID: staffId }];
-            const eventQueryAppDetails = setStaffMappingParams();
-            await callQueryAppDetailsLambda(eventQueryAppDetails);
-        } else if (role === "TL") {
-            await queryStaffMappingTL();
-        } else if (role === "CM") {
-            await queryStaffMappingCM();
-        } else if (role === "PU") {
-            await scanStaffMappingPU();
-        } else {
-            responseBody = {
-                respType: "000",
-                response: "Role is not authorized to perform any action."
-            };
-            return setResponseFinal(responseBody);
+    /**
+     * Orchestrates fetching staff mappings based on the user's role.
+     * @param {string} currentRole - The role of the staff.
+     */
+    async function fetchAppByRole(currentRole) {
+        switch (currentRole) {
+            case "TM":
+                // For TM, only their own staffId is relevant
+                ddbStaffMappingList = [{ STF_ID: staffId }];
+                break;
+            case "TL":
+                // For TL, fetch self and direct reports
+                await queryStaffMappingTL();
+                break;
+            case "CM":
+                // For CM, fetch all TMs and TLs within their channel
+                await queryStaffMappingCM();
+                break;
+            case "PU":
+                // For PU, scan all channels
+                await scanStaffMappingPU();
+                break;
+            default:
+                console.warn(`Role '${currentRole}' is not authorized to perform any action.`);
+                return setResponseFinal({
+                    respType: "000",
+                    response: "Role is not authorized to perform any action."
+                });
         }
+
+        // --- Step 3: Call QueryAppDetailsLMS Lambda with the compiled staff list ---
+        const eventQueryAppDetails = setStaffMappingParams();
+        await callQueryAppDetailsLambda(eventQueryAppDetails);
     }
 
+    /**
+     * Queries STF_MAPPING for TL's own STF_ID.
+     */
     async function queryStaffMappingTL() {
-        console.log("Inside queryStaffMappingTL executing:");
-        getStaffListParams = {
+        console.log("Inside queryStaffMappingTL: Fetching TL's own staffId.");
+        const queryParams = {
             TableName: "STF_MAPPING",
             KeyConditionExpression: "#STF_ID = :stfId",
             ExpressionAttributeNames: {
@@ -96,36 +134,7 @@ export const handler = async (event) => {
             ProjectionExpression: "STF_ID",
         };
 
-        await onQueryStaffmappingTL(); // Start the recursive query
-    }
-
-    async function onQueryStaffmappingTL() {
-        console.log("Inside onQueryStaffmappingTL executing:");
-        const data = await myDocumentClient.send(new QueryCommand(getStaffListParams));
-
-        data.Items.forEach((itemData) => {
-            ddbStaffMappingList.push(itemData);
-        });
-
-        if (data.LastEvaluatedKey) {
-            getStaffListParams.ExclusiveStartKey = data.LastEvaluatedKey;
-            await onQueryStaffmappingTL(); // Continue querying
-        } else {
-            await queryStaffMappingTLForMgrId();
-        }
-    }
-
-    async function queryStaffMappingTLForMgrId() {
-        const queryParams = {
-            TableName: "STF_MAPPING",
-            IndexName: "MGR_ID-index", // IndexName does not use '#'
-            KeyConditionExpression: "MGR_ID = :stfId",
-            ExpressionAttributeValues: {
-                ":stfId": staffId,
-            },
-            ProjectionExpression: "STF_ID",
-        };
-
+        // Handle pagination for query
         let lastEvaluatedKey;
         do {
             if (lastEvaluatedKey) {
@@ -138,14 +147,44 @@ export const handler = async (event) => {
             lastEvaluatedKey = data.LastEvaluatedKey;
         } while (lastEvaluatedKey);
 
-        const eventQueryAppDetails = setStaffMappingParams();
-        console.log("eventQueryAppDetails:", eventQueryAppDetails);
-        await callQueryAppDetailsLambda(eventQueryAppDetails);
+        await queryStaffMappingTLForMgrId(); // Proceed to fetch reports
     }
 
-    // for CM
+    /**
+     * Queries STF_MAPPING by MGR_ID index for TL's direct reports (TMs).
+     */
+    async function queryStaffMappingTLForMgrId() {
+        console.log("Inside queryStaffMappingTLForMgrId: Fetching TM's under TL.");
+        const queryParams = {
+            TableName: "STF_MAPPING",
+            IndexName: "MGR_ID-index", // Ensure this index exists on your DynamoDB table
+            KeyConditionExpression: "MGR_ID = :stfId",
+            ExpressionAttributeValues: {
+                ":stfId": staffId,
+            },
+            ProjectionExpression: "STF_ID",
+        };
+
+        // Handle pagination for query
+        let lastEvaluatedKey;
+        do {
+            if (lastEvaluatedKey) {
+                queryParams.ExclusiveStartKey = lastEvaluatedKey;
+            }
+            const data = await myDocumentClient.send(new QueryCommand(queryParams));
+            data.Items.forEach((itemData) => {
+                ddbStaffMappingList.push(itemData);
+            });
+            lastEvaluatedKey = data.LastEvaluatedKey;
+        } while (lastEvaluatedKey);
+    }
+
+    /**
+     * Scans STF_MAPPING for CM to fetch all TMs and TLs within their channel.
+     */
     async function queryStaffMappingCM() {
-        getStaffListParams = {
+        console.log("Inside queryStaffMappingCM: Fetching TMs and TLs for CM.");
+        const scanParams = {
             TableName: "STF_MAPPING",
             FilterExpression: "CHANNEL_ID = :channelId AND (#STAFF_ROLE = :roleTM OR #STAFF_ROLE = :roleTL)",
             ExpressionAttributeNames: {
@@ -159,68 +198,75 @@ export const handler = async (event) => {
             ProjectionExpression: "STF_ID, MGR_ID",
         };
 
-        await onScanStaffmappingCM();
+        // Handle pagination for scan
+        let lastEvaluatedKey;
+        do {
+            if (lastEvaluatedKey) {
+                scanParams.ExclusiveStartKey = lastEvaluatedKey;
+            }
+            const data = await myDocumentClient.send(new ScanCommand(scanParams));
+            data.Items.forEach((itemData) => {
+                ddbStaffMappingList.push(itemData);
+            });
+            lastEvaluatedKey = data.LastEvaluatedKey;
+        } while (lastEvaluatedKey);
+
+        // The original code had a reduce operation here for CM.
+        // If the intent is to group by MGR_ID for the final `ddbStaffMappingList`
+        // passed to `QueryAppDetailsLMS`, then this transformation should occur.
+        // Otherwise, if `QueryAppDetailsLMS` expects a flat list of STF_IDs,
+        // then this reduce might not be necessary or should be handled differently.
+        // I'm keeping it as it was in the original logic, assuming its purpose.
+        ddbStaffMappingList = ddbStaffMappingList.reduce((r, a) => {
+            const { MGR_ID, STF_ID } = a;
+            // Ensure MGR_ID exists before accessing it as a key
+            const managerId = MGR_ID || 'NO_MANAGER'; // Handle cases where MGR_ID might be undefined
+            if (!r[managerId]) {
+                r[managerId] = [];
+            }
+            r[managerId].push({ STF_ID });
+            return r;
+        }, {});
+
+        console.log("ddbStaffMappingList after CM processing:", ddbStaffMappingList);
     }
 
-    async function onScanStaffmappingCM() {
-        const data = await myDocumentClient.send(new ScanCommand(getStaffListParams));
-
-        data.Items.forEach((itemData) => {
-            ddbStaffMappingList.push(itemData);
-        });
-
-        if (data.LastEvaluatedKey) {
-            getStaffListParams.ExclusiveStartKey = data.LastEvaluatedKey;
-            await onScanStaffmappingCM();
-        } else {
-            // This part transforms the ddbStaffMappingList. Ensure this is the desired final structure.
-            ddbStaffMappingList = ddbStaffMappingList.reduce((r, a) => {
-                const { MGR_ID, STF_ID } = a;
-                // Assuming you want to group STF_ID by MGR_ID
-                if (!r[MGR_ID]) {
-                    r[MGR_ID] = [];
-                }
-                r[MGR_ID].push({ STF_ID });
-                return r;
-            }, {});
-
-            const eventQueryAppDetails = setStaffMappingParams();
-            await callQueryAppDetailsLambda(eventQueryAppDetails);
-        }
-    }
-
-    // for PU
+    /**
+     * Scans CHNL_MAPPING for PU to get all channel IDs.
+     */
     async function scanStaffMappingPU() {
-        getStaffListParams = {
+        console.log("Inside scanStaffMappingPU: Fetching all channel IDs for PU.");
+        const scanParams = {
             TableName: "CHNL_MAPPING",
             ProjectionExpression: "CHANNEL_ID",
         };
 
-        await onScanStaffmapping();
-    }
-
-    async function onScanStaffmapping() {
-        const data = await myDocumentClient.send(new ScanCommand(getStaffListParams));
-
-        data.Items.forEach((itemData) => {
-            if (itemData.CHANNEL_ID !== undefined && itemData.CHANNEL_ID !== "") { // Changed || to &&
-                if (tempChannelIds.indexOf(itemData.CHANNEL_ID) === -1) {
-                    tempChannelIds.push(itemData.CHANNEL_ID);
-                    ddbStaffMappingList.push(itemData); // Pushing the whole item, but tempChannelIds is for unique check
-                }
+        // Handle pagination for scan
+        let lastEvaluatedKey;
+        do {
+            if (lastEvaluatedKey) {
+                scanParams.ExclusiveStartKey = lastEvaluatedKey;
             }
-        });
-
-        if (data.LastEvaluatedKey) {
-            getStaffListParams.ExclusiveStartKey = data.LastEvaluatedKey;
-            await onScanStaffmapping();
-        } else {
-            const eventQueryAppDetails = setStaffMappingParams();
-            await callQueryAppDetailsLambda(eventQueryAppDetails);
-        }
+            const data = await myDocumentClient.send(new ScanCommand(scanParams));
+            data.Items.forEach((itemData) => {
+                if (itemData.CHANNEL_ID !== undefined && itemData.CHANNEL_ID !== null && itemData.CHANNEL_ID !== "") {
+                    // Only add unique channel IDs to tempChannelIds
+                    if (!tempChannelIds.includes(itemData.CHANNEL_ID)) {
+                        tempChannelIds.push(itemData.CHANNEL_ID);
+                        // Add the whole item to ddbStaffMappingList, or just the channel ID if that's all that's needed later
+                        ddbStaffMappingList.push(itemData);
+                    }
+                }
+            });
+            lastEvaluatedKey = data.LastEvaluatedKey;
+        } while (lastEvaluatedKey);
+        console.log("ddbStaffMappingList after PU processing (unique channels):", ddbStaffMappingList);
     }
 
-    // set eventQueryAppDetails value as according to QueryAppDetails Lambda
+    /**
+     * Prepares the payload for the QueryAppDetailsLMS Lambda.
+     * @returns {object} The event object for QueryAppDetailsLMS.
+     */
     function setStaffMappingParams() {
         return {
             ddbStaffMappingList: ddbStaffMappingList,
@@ -233,9 +279,12 @@ export const handler = async (event) => {
         };
     }
 
-    // common function for tm and sl to fetch customer details
+    /**
+     * Invokes the QueryAppDetailsLMS Lambda function.
+     * @param {object} eventQueryAppDetails - The payload for QueryAppDetailsLMS.
+     */
     async function callQueryAppDetailsLambda(eventQueryAppDetails) {
-        console.log("inside callQueryAppDetailstambda");
+        console.log("Invoking QueryAppDetailsLMS...");
         const tmParams = {
             FunctionName: "QueryAppDetailsLMS",
             InvocationType: "RequestResponse",
@@ -243,51 +292,63 @@ export const handler = async (event) => {
             Payload: JSON.stringify(eventQueryAppDetails),
         };
 
-        console.log("eventQueryAppDetails for QueryAppDetailsLMS:", eventQueryAppDetails);
+        console.log("Payload for QueryAppDetailsLMS:", eventQueryAppDetails);
         try {
             const data = await lambda.send(new InvokeCommand(tmParams));
-            console.log("QueryAppDetailsLMS no error observed");
-            responseBody = {
+            console.log("QueryAppDetailsLMS invocation successful.");
+
+            // Parse the response from QueryAppDetailsLMS
+            const appDataPayload = JSON.parse(Buffer.from(data.Payload).toString());
+
+            // Construct the final successful response for the calling client
+            const finalResponseBody = {
                 respType: "001",
                 response: "Success",
                 role: role,
-                appData: JSON.parse(Buffer.from(data.Payload).toString()),
+                appData: appDataPayload, // This should already be the parsed body of QueryAppDetailsLMS's response
             };
-            return setResponseFinal(responseBody);
+            return setResponseFinal(finalResponseBody);
         } catch (err) {
-            console.error("QueryAppDetailsLMS encountered error", err);
-            return onError(err);
+            console.error("Error invoking QueryAppDetailsLMS:", err);
+            return onError(err); // Centralized error handling
         }
     }
 
-    // common function for errors
+    /**
+     * Handles and formats error responses.
+     * @param {Error} err - The error object.
+     * @returns {object} The formatted error response for API Gateway.
+     */
     function onError(err) {
-        console.error("Error encountered:", err);
-        const responseFail = {
-            statusCode: 500,
-            headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "Cache-Control",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-            },
-            body: JSON.stringify({ message: "Internal Server Error", error: err.message }), // More descriptive error
-            isBase64Encoded: false,
+        console.error("An error occurred:", err);
+        const errorMessage = err.message || "An unexpected error occurred.";
+        const responseBody = {
+            respType: "000",
+            response: errorMessage,
+            errorDetails: err.stack || "No stack trace available." // Include stack for debugging
         };
-        return responseFail;
+        return setResponseFinal(responseBody, 500); // Return with 500 status code for server errors
     }
 
-    function setResponseFinal(responseBody) {
-        console.log("inside setResponseFinal");
-        const responseParam = {
-            statusCode: 200,
+    /**
+     * Formats the final HTTP response for API Gateway.
+     * @param {object} responseBody - The body of the response.
+     * @param {number} statusCode - The HTTP status code (defaults to 200).
+     * @returns {object} The formatted API Gateway response.
+     */
+    function setResponseFinal(responseBody, statusCode = 200) {
+        console.log(`Setting final response with status ${statusCode}.`);
+        return {
+            statusCode: statusCode,
             headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "Cache-Control",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Access-Control-Allow-Origin": "*", // Allow all origins for CORS
+                "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token", // Add more headers if needed
+                "Cache-Control": "no-cache, no-store, must-revalidate", // Prevent caching
+                "Pragma": "no-cache",
+                "Expires": "0"
             },
-            body: JSON.stringify(responseBody),
+            body: JSON.stringify(responseBody), // Ensure body is a string
             isBase64Encoded: false,
         };
-        return responseParam;
     }
 };
