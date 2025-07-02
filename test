@@ -10,8 +10,16 @@ const myDocumentClient = DynamoDBDocumentClient.from(dbClient); // Create Docume
 
 const asyncDeflate = promisify(deflate);
 
+// Modified zip function to handle BigInt
 async function zip(object) {
-  return (await asyncDeflate(JSON.stringify(object))).toString("base64");
+  // Use a replacer function for JSON.stringify to handle BigInts
+  const jsonString = JSON.stringify(object, (key, value) => {
+    if (typeof value === 'bigint') {
+      return value.toString(); // Convert BigInt to string
+    }
+    return value; // Return other values as-is
+  });
+  return (await asyncDeflate(jsonString)).toString("base64");
 }
 
 export const handler = async (event, context, callback) => {
@@ -41,14 +49,14 @@ export const handler = async (event, context, callback) => {
   try {
     if (event.role === "TM" || event.role === "TL") {
       await queryAppDetailsWithStaffId(0);
+      // Ensure the stringification here also handles BigInts if dict can contain them
       callback(
         null,
         JSON.stringify(dict, (key, value) => {
-          if (value > Number.MAX_SAFE_INTEGER) {
-            return value.toString() + "";
-          } else {
-            return value;
+          if (typeof value === 'bigint' || (typeof value === 'number' && value > Number.MAX_SAFE_INTEGER)) {
+            return value.toString();
           }
+          return value;
         }),
       );
     } else if (event.role === "CM") {
@@ -159,7 +167,14 @@ export const handler = async (event, context, callback) => {
       try {
         ddbAppDetailsList = [];
         await onQueryChannelManager(staffId, appTableParams);
-        await queryInner(staffId, currentIndex, 0); // Assuming ddbAppDetailsList is populated by onQueryChannelManager
+        // Ensure queryInner only proceeds if ddbAppDetailsList is fully populated for the current staffId
+        // This might require restructuring if onQueryChannelManager truly needs to finish before queryInner starts.
+        // Given your original code structure, onQueryChannelManager seemed to be part of populating ddbAppDetailsList
+        // which then affects dict[staffId] after queryInner finishes.
+        // Let's assume for now that ddbAppDetailsList is global and accumulates.
+        // If ddbAppDetailsList needs to be scoped per staffId for queryInner, then
+        // you'd pass a copy or reset it appropriately.
+        await queryInner(staffId, currentIndex, 0);
       } catch (e) {
         console.log("Inside error", e);
         throw e;
@@ -173,17 +188,17 @@ export const handler = async (event, context, callback) => {
   async function onQueryChannelManager(staffId, appTableParams) {
     try {
       const data = await myDocumentClient.send(new QueryCommand(appTableParams));
-      let mapApp = null;
       if (data && data.Items && data.Items.length > 0) {
         for (const item of data.Items) {
-          mapApp = setAppData(item);
-          ddbAppDetailsList.push(mapApp);
+          ddbAppDetailsList.push(setAppData(item));
         }
       }
       if (data.LastEvaluatedKey) {
         appTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
         await onQueryChannelManager(staffId, appTableParams);
       }
+      // No 'else' block here because the outer queryAppDetailsChannelManager calls queryInner
+      // after this (potentially recursive) onQueryChannelManager completes.
     } catch (err) {
       console.log("Inside error", err);
       throw err;
@@ -307,7 +322,7 @@ export const handler = async (event, context, callback) => {
   async function queryAppDetailsWithChannelId(currentIndex) {
     if (currentIndex === staffIndexList.length) {
       const zippedObject = await zip(appData);
-      const compressedData = JSON.stringify(zippedObject);
+      const compressedData = JSON.stringify(zippedObject); // This also needs to handle BigInts if zippedObject has them
       const params = {
         Bucket: "rocketmaniladataobjects",
         ServerSideEncryption: "AES256",
