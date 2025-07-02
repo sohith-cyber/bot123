@@ -1,398 +1,392 @@
-const AWS = require("aws-sdk");
-const zlib = require("zlib");
-const { promisify } = require("util");
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { deflate } from "zlib";
+import { promisify } from "util";
 
-const lambda = new AWS.Lambda();
-const myDocumentClient = new AWS.DynamoDB.DocumentClient();
-const asyncDeflate = promisify(zlib.deflate);
+const asyncDeflate = promisify(deflate);
+
+const lambda = new LambdaClient({});
+const myDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 async function zip(object) {
-  return (await asyncDeflate(JSON.stringify(object))).toString("base64");
+    return (await asyncDeflate(JSON.stringify(object))).toString("base64");
 }
 
-exports.handler = function(event, context, callback) {
-  const staffIndexList = event.ddbstaffMappingList;
-  const dateString = event.datestring;
-  console.log("dateString: ", dateString);
+export const handler = async (event, context) => {
+    let staffIndexList = event.ddbStaffMappingList;
+    const dateString = event.dateString;
+    console.log("dateString: ", dateString);
+    const dict = {};
+    let ddbAppDetailsList = [];
+    const rangeDateCM = new Date(new Date().setDate(new Date().getDate() - 1));
+    const dateStringCM = rangeDateCM.toISOString();
+    let startDate = "";
+    let endDate = "";
 
-  const dict = {};
-  let ddbAppDetailsList = [];
-
-  let startDate, endDate;
-
-  if (event.startDate && event.endDate) {
-    startDate = event.startDate;
-    endDate = event.endDate;
-    console.log("startDate from event: ", startDate);
-    console.log("endDate from event: ", endDate);
-  } else {
-    const todayDate = new Date();
-    const prevDate = new Date(new Date().setDate(todayDate.getDate() - 1));
-    startDate = prevDate.toISOString();
-    endDate = todayDate.toISOString();
-  }
-
-  const rangeDateCM = new Date(new Date().setDate(new Date().getDate() - 1));
-  const dateStringCM = rangeDateCM.toISOString();
-
-  if (event.role === "TM" || event.role === "TL") {
-    queryAppDetailsWithStaffId(0);
-  } else if (event.role === "CM") {
-    queryAppDetailsForCM(0);
-  } else if (event.role === "PU") {
-    queryAppDetailsWithChannelId(0);
-  } else {
-    callback(null, null);
-  }
-
-  function queryAppDetailsWithStaffId(index) {
-    if (index === staffIndexList.length) {
-      zip(dict).then(result => {
-        callback(null, result);
-      });
+    if (event.startDate && event.endDate) {
+        startDate = event.startDate;
+        endDate = event.endDate;
+        console.log("startDate from event", startDate);
+        console.log("endDate from event", endDate);
     } else {
-      queryAppDetails(index);
+        const todayDate = new Date();
+        let prevDate = new Date(new Date().setDate(new Date().getDate() - 15));
+        if (event.role === "TM") {
+            prevDate = new Date(new Date().setDate(new Date().getDate() - 61));
+        }
+        console.log("todayDate: ", todayDate);
+        console.log("prevDate :", prevDate);
+        startDate = prevDate.toISOString();
+        endDate = todayDate.toISOString();
     }
-  }
-
-  function queryAppDetails(index) {
-    const staffId = staffIndexList[index]["STF ID"];
-    console.log("staffId: ", staffId);
-    console.log("startDate: ", startDate);
-    console.log("endDate: ", endDate);
-
-    const appTableParams = {
-      TableName: "APP DETAILS",
-      IndexName: "STF_ID-CREATION DT-index",
-      KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT BETWEEN :startDate AND :endDate",
-      ExpressionAttributeNames: {
-        "#STF_ID": "STF_ID",
-        "#CREATION_DT": "CREATION DT"
-      },
-      ExpressionAttributeValues: {
-        ":stfId": staffId,
-        ":startDate": startDate,
-        ":endDate": endDate
-      },
-      ScanIndexForward: false
-    };
-
-    console.log("appTableParams: ", appTableParams);
 
     try {
-      ddbAppDetailsList = [];
-      myDocumentClient.query(appTableParams, onQuery);
-
-      function onQuery(err, data) {
-        if (err) {
-          console.log("Inside error", err);
+        if (event.role === "TM" || event.role === "TL") {
+            console.log("event.role: ", event.role);
+            await queryAppDetailsWithStaffId(0);
+        } else if (event.role === "CM") {
+            await queryAppDetailsForCM(0);
+        } else if (event.role === "PU") {
+            await queryAppDetailsWithChannelId(0);
         } else {
-          if (data && data.Items && data.Items.length > 0) {
-            for (let i = 0; i < data.Items.length; i++) {
-              const mapApp = setAppData(data.Items[i]);
-              ddbAppDetailsList.push(mapApp);
-            }
-
-            if (typeof data.LastEvaluatedKey !== "undefined") {
-              appTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-              myDocumentClient.query(appTableParams, onQuery);
-            } else {
-              dict[staffId] = ddbAppDetailsList;
-              queryAppDetailsWithStaffId(index + 1);
-            }
-          } else {
-            queryAppDetailsWithStaffId(index + 1);
-          }
+            return null; // Or throw an error if this is an invalid role
         }
-      }
-    } catch (e) {
-      console.log("Error while querying data", e);
-    }
-  }
 
-  function queryAppDetailsForCM(index) {
-    if (index === Object.keys(staffIndexList).length) {
-      zip(dict).then(result => {
-        callback(null, result);
-      });
-    } else {
-      queryAppDetailsChannelManager(index);
-    }
-  }
-
-  function queryAppDetailsChannelManager(index) {
-    const staffId = Object.keys(staffIndexList)[index];
-    if (staffId !== "NA") {
-      const appTableParams = {
-        TableName: "APP DETAILS",
-        IndexName: "STF_ID-CREATION DT-index",
-        KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
-        ExpressionAttributeNames: {
-          "#STF_ID": "STF_ID",
-          "#CREATION_DT": "CREATION DT"
-        },
-        ExpressionAttributeValues: {
-          ":stfId": staffId,
-          ":sysdate": dateStringCM
-        },
-        ScanIndexForward: false
-      };
-
-      try {
-        ddbAppDetailsList = [];
-        myDocumentClient.query(appTableParams, onQuery);
-
-        function onQuery(err, data) {
-          if (err) {
-            console.log("Inside error", err);
-          } else {
-            if (data && data.Items && data.Items.length > 0) {
-              for (let i = 0; i < data.Items.length; i++) {
-                const mapApp = setAppData(data.Items[i]);
-                ddbAppDetailsList.push(mapApp);
-              }
-
-              if (typeof data.LastEvaluatedKey !== "undefined") {
-                appTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-                myDocumentClient.query(appTableParams, onQuery);
-              } else {
-                queryInner(staffId, index, 0);
-              }
-            } else {
-              queryInner(staffId, index, 0);
-            }
-          }
+        if (event.role === "PU") {
+            // Special handling for PU role as per original code
+            return JSON.stringify(dict, (key, value) => {
+                if (typeof value === 'number' && value > Number.MAX_SAFE_INTEGER) {
+                    return value.toString();
+                }
+                return value;
+            });
+        } else {
+            const zippedResult = await zip(dict);
+            return zippedResult;
         }
-      } catch (e) {
-        console.log("Error while querying data", e);
-      }
-    } else {
-      console.log("StaffId: NA");
-      queryInnerForNA(staffId, index, 0);
-    }
-  }
 
-  function queryInnerForNA(staffId, parentIndex, childIndex) {
-    const innerStaffList = staffIndexList[staffId];
-    if (childIndex === innerStaffList.length) {
-      queryAppDetailsForCM(parentIndex + 1);
-    } else {
-      const innerStaffId = innerStaffList[childIndex]["STF ID"];
-      if (!(innerStaffId in dict)) {
-        const innerTableParams = {
-          TableName: "APP DETAILS",
-          IndexName: "STF_ID-CREATION DT-index",
-          KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
-          ExpressionAttributeNames: {
-            "#STF_ID": "STF_ID",
-            "#CREATION_DT": "CREATION DT"
-          },
-          ExpressionAttributeValues: {
-            ":stfId": innerStaffId,
-            ":sysdate": dateStringCM
-          },
-          ScanIndexForward: false
+    } catch (error) {
+        console.error("Error in handler:", error);
+        throw error; // Re-throw the error to indicate failure
+    }
+
+    async function queryAppDetailsWithStaffId(index) {
+        if (index === staffIndexList.length) {
+            return; // All staff processed
+        } else {
+            await queryAppDetails(index);
+            await queryAppDetailsWithStaffId(index + 1); // Recurse for the next staff
+        }
+    }
+
+    async function queryAppDetails(index) {
+        console.log("index: ", index);
+        const staffId = staffIndexList[index].STF_ID;
+        console.log("staffId: ", staffId);
+        console.log("startDate:", startDate);
+        console.log("endDate: ", endDate);
+
+        const appTableParams = {
+            TableName: "APP_DETAILS",
+            IndexName: "STF_ID-CREATION_DT-index",
+            KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT BETWEEN :startDate AND :endDate",
+            ExpressionAttributeNames: {
+                "#STF_ID": "STF_ID",
+                "#CREATION_DT": "CREATION_DT",
+            },
+            ExpressionAttributeValues: {
+                ":stfId": staffId,
+                ":startDate": startDate,
+                ":endDate": endDate,
+            },
+            ScanIndexForward: false, // Equivalent to "backward"
         };
 
-        try {
-          ddbAppDetailsList = [];
-          myDocumentClient.query(innerTableParams, onQueryInnerForNA);
+        console.log("appTableParams: ", appTableParams);
 
-          function onQueryInnerForNA(err, data) {
-            if (err) {
-              console.log("Inside error", err);
-            } else {
-              if (data && data.Items && data.Items.length > 0) {
-                for (let i = 0; i < data.Items.length; i++) {
-                  const mapApp = setAppData(data.Items[i]);
-                  ddbAppDetailsList.push(mapApp);
-                }
-
-                if (typeof data.LastEvaluatedKey !== "undefined") {
-                  innerTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-                  myDocumentClient.query(innerTableParams, onQueryInnerForNA);
-                } else {
-                  dict[innerStaffId] = ddbAppDetailsList;
-                  queryInnerForNA(staffId, parentIndex, childIndex + 1);
-                }
-              } else {
-                queryInnerForNA(staffId, parentIndex, childIndex + 1);
-              }
-            }
-          }
-        } catch (e) {
-          console.log("Error while querying data", e);
-        }
-      } else {
-        queryInnerForNA(staffId, parentIndex, childIndex + 1);
-      }
-    }
-  }
-
-  function queryInner(staffId, parentIndex, childIndex) {
-    const innerStaffList = staffIndexList[staffId];
-    if (childIndex === innerStaffList.length) {
-      dict[staffId] = ddbAppDetailsList;
-      queryAppDetailsForCM(parentIndex + 1);
-    } else {
-      const innerStaffId = innerStaffList[childIndex]["STF ID"];
-      const innerTableParams = {
-        TableName: "APP DETAILS",
-        IndexName: "STF_ID-CREATION DT-index",
-        KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
-        ExpressionAttributeNames: {
-          "#STF_ID": "STF_ID",
-          "#CREATION_DT": "CREATION DT"
-        },
-        ExpressionAttributeValues: {
-          ":stfId": innerStaffId,
-          ":sysdate": dateStringCM
-        },
-        ScanIndexForward: false
-      };
-
-      try {
         ddbAppDetailsList = [];
-        myDocumentClient.query(innerTableParams, onQueryInner);
+        let lastEvaluatedKey;
 
-        function onQueryInner(err, data) {
-          if (err) {
-            console.log("Inside error", err);
-          } else {
-            if (data && data.Items && data.Items.length > 0) {
-              for (let i = 0; i < data.Items.length; i++) {
-                const mapApp = setAppData(data.Items[i]);
-                ddbAppDetailsList.push(mapApp);
-              }
+        do {
+            try {
+                const command = new QueryCommand(appTableParams);
+                const data = await myDocumentClient.send(command);
 
-              if (typeof data.LastEvaluatedKey !== "undefined") {
-                innerTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-                myDocumentClient.query(innerTableParams, onQueryInner);
-              } else {
-                queryInner(staffId, parentIndex, childIndex + 1);
-              }
-            } else {
-              queryInner(staffId, parentIndex, childIndex + 1);
+                if (data && data.Items && data.Items.length > 0) {
+                    console.log("data.Items.length: ", data.Items.length);
+                    for (const item of data.Items) {
+                        const mapApp = setAppData(item);
+                        ddbAppDetailsList.push(mapApp);
+                    }
+                }
+                lastEvaluatedKey = data.LastEvaluatedKey;
+                appTableParams.ExclusiveStartKey = lastEvaluatedKey;
+
+            } catch (err) {
+                console.error("Error querying data for staffId:", staffId, err);
+                throw err; // Re-throw to handle higher up
             }
-          }
-        }
-      } catch (e) {
-        console.log("Error while querying data", e);
-      }
+        } while (lastEvaluatedKey);
+
+        dict[staffId] = ddbAppDetailsList;
     }
-  }
 
-  function queryAppDetailsWithChannelId(index) {
-    if (index === staffIndexList.length) {
-      callback(null, JSON.stringify(dict, (key, value) => {
-        if (typeof value === 'bigint') {
-          return value.toString();
-        }
-        return value;
-      }));
-    } else {
-      queryAppDetailsPU(index);
-    }
-  }
-
-  function queryAppDetailsPU(index) {
-    const channelId = staffIndexList[index]["CHANNEL ID"];
-    const appTableParams = {
-      TableName: "APP DETAILS",
-      IndexName: "CHANNEL_ID-CREATION DT-index",
-      KeyConditionExpression: "#CHANNEL_ID = :channelId AND #CREATION_DT >= :sysdate",
-      ExpressionAttributeNames: {
-        "#CHANNEL_ID": "CHANNEL ID",
-        "#CREATION_DT": "CREATION DT"
-      },
-      ExpressionAttributeValues: {
-        ":channelId": channelId,
-        ":sysdate": dateString
-      },
-      ScanIndexForward: false
-    };
-
-    try {
-      ddbAppDetailsList = [];
-      myDocumentClient.query(appTableParams, onQuery);
-
-      function onQuery(err, data) {
-        if (err) {
-          console.log("Inside error", err);
+    async function queryAppDetailsForCM(index) {
+        const staffIds = Object.keys(staffIndexList);
+        if (index === staffIds.length) {
+            return; // All staff processed
         } else {
-          if (data && data.Items && data.Items.length > 0) {
-            data.Items.forEach(item => {
-              const mapApp = setAppData(item);
-              ddbAppDetailsList.push(mapApp);
-            });
-
-            if (typeof data.LastEvaluatedKey !== "undefined") {
-              appTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-              myDocumentClient.query(appTableParams, onQuery);
-            } else {
-              dict[channelId] = ddbAppDetailsList;
-              queryAppDetailsWithChannelId(index + 1);
-            }
-          } else {
-            queryAppDetailsWithChannelId(index + 1);
-          }
+            await queryAppDetailsChannelManager(index);
+            await queryAppDetailsForCM(index + 1); // Recurse for the next staff
         }
-      }
-    } catch (e) {
-      console.log("Error while querying data", e);
     }
-  }
 
-  function setAppData(items) {
-    const mapParam = {};
-    if (items !== undefined) {
-      mapParam.appId = items["APP ID"];
-      mapParam.staffId = items["STF ID"];
-      mapParam.aapsId = items["AAPS ID"];
-      mapParam.aapsStatus = items["AAPS STATUS"];
-      mapParam.additionalData = items["ADDITIONAL DATA"];
-      mapParam.applstatus = items["APPL STATUS"];
-      mapParam.bureaustatus = items["BUREAUSTATUS"];
-      mapParam.campaignid = items["CAMPAIGNID"];
-      mapParam.cardApplied = items["CARD TYPE"];
-      mapParam.channelId = items["CHANNEL ID"];
-      mapParam.cId = items["CID"];
-      mapParam.appCompletionDate = items["COMPLETION DT"];
-      mapParam.appCreationDate = items["CREATION DT"];
-      mapParam.custDob = items["CUST DOB"];
-      mapParam.custEmail = items["CUST EMAIL"];
-      mapParam.customerID = items["CUST ID"];
-      mapParam.custIname = items["CUST LNAME"];
-      mapParam.customerName = items["CUST NAME"];
-      mapParam.homeCountry = items["HOME COUNTRY"];
-      mapParam.idType = items["ID TYPE"];
-      mapParam.isLead = items["IS LEAD"];
-      mapParam.mobileNumber = items["MOB NUM"];
-      mapParam.otpVerifyStatus = items["OTP VERIFY STATUS"];
-      mapParam.remarks = items["REMARKS"];
-      mapParam.srcUrl = items["SRC URL"];
-      mapParam.staffName = items["STF NAME"];
-      mapParam.homeBlock = items["HOME BLOCK"];
-      mapParam.homeCity = items["HOME CITY"];
-      mapParam.homeProvince = items["HOME PROVINCE"];
-      mapParam.homeStreet = items["HOME STREET"];
-      mapParam.homeZipcode = items["HOME ZIPCODE"];
-      mapParam.custMname = items["CUST MNAME"];
-      mapParam.jumioCustRef = items["JUMIO CUST REF"];
-      mapParam.creditCardNum = items["CREDIT CARD NUM"];
-      mapParam.apeMessage = items["APEMessage"];
-      mapParam.apeResponseBody = items["APEResponseBody"];
-      mapParam.apeStatusCode = items["APEStatusCode"];
-      mapParam.apeId = items["APE_TD"];
-      mapParam.homeAdd1 = items["HOME ADD1"];
-      mapParam.homeAdd2 = items["HOME ADD2"];
-      mapParam.homeAdd3 = items["HOME ADD3"];
-      mapParam.promoCode = items["VOUCHER CODE"];
-      mapParam.idTypeValue = items["ID_TYPE_VALUE"];
-      mapParam.staffTimestamp = items["STAFFTIMESTAMP"];
-      mapParam.followUpStatus = items["FOLLOWUPSTATUS"];
-      mapParam.remarksOnly = items["REMARKSONLY"];
+    async function queryAppDetailsChannelManager(index) {
+        const staffId = Object.keys(staffIndexList)[index];
+        if (staffId !== "NA") {
+            const appTableParams = {
+                TableName: "APP_DETAILS",
+                IndexName: "STF_ID-CREATION_DT-index",
+                KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
+                ExpressionAttributeNames: {
+                    "#STF_ID": "STF_ID",
+                    "#CREATION_DT": "CREATION_DT",
+                },
+                ExpressionAttributeValues: {
+                    ":stfId": staffId,
+                    ":sysdate": dateStringCM,
+                },
+                ScanIndexForward: false,
+            };
+
+            ddbAppDetailsList = [];
+            let lastEvaluatedKey;
+            do {
+                try {
+                    const command = new QueryCommand(appTableParams);
+                    const data = await myDocumentClient.send(command);
+
+                    if (data && data.Items && data.Items.length > 0) {
+                        for (const item of data.Items) {
+                            const mapApp = setAppData(item);
+                            ddbAppDetailsList.push(mapApp);
+                        }
+                    }
+                    lastEvaluatedKey = data.LastEvaluatedKey;
+                    appTableParams.ExclusiveStartKey = lastEvaluatedKey;
+                } catch (err) {
+                    console.error("Error querying data for CM staffId:", staffId, err);
+                    throw err;
+                }
+            } while (lastEvaluatedKey);
+
+            await queryInner(staffId, index, 0);
+
+        } else {
+            console.log("StaffId ^^", staffId);
+            await queryInnerForNA(staffId, index, 0);
+        }
     }
-    return mapParam;
-  }
+
+    async function queryInnerForNA(staffId, parentIndex, childIndex) {
+        const innerStaffList = staffIndexList[staffId];
+        console.log("innerStaffList", innerStaffList);
+        if (childIndex === innerStaffList.length) {
+            return; // All inner staff processed for this parent
+        } else {
+            const innerStaffIdNA = innerStaffList[childIndex].STF_ID; // Corrected syntax
+            if (!(innerStaffIdNA in dict)) {
+                console.log("NA staff id", innerStaffIdNA);
+                const innerTableParams = {
+                    TableName: "APP_DETAILS",
+                    IndexName: "STF_ID-CREATION_DT-index",
+                    KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
+                    ExpressionAttributeNames: {
+                        "#STF_ID": "STF_ID",
+                        "#CREATION_DT": "CREATION_DT",
+                    },
+                    ExpressionAttributeValues: {
+                        ":stfId": innerStaffIdNA,
+                        ":sysdate": dateStringCM,
+                    },
+                    ScanIndexForward: false,
+                };
+
+                let innerDdbAppDetailsList = [];
+                let lastEvaluatedKey;
+                do {
+                    try {
+                        const command = new QueryCommand(innerTableParams);
+                        const data = await myDocumentClient.send(command);
+
+                        if (data && data.Items && data.Items.length > 0) {
+                            for (const item of data.Items) {
+                                const mapApp = setAppData(item);
+                                innerDdbAppDetailsList.push(mapApp);
+                            }
+                        }
+                        lastEvaluatedKey = data.LastEvaluatedKey;
+                        innerTableParams.ExclusiveStartKey = lastEvaluatedKey;
+                    } catch (err) {
+                        console.error("Error querying inner data for NA staffId:", innerStaffIdNA, err);
+                        throw err;
+                    }
+                } while (lastEvaluatedKey);
+
+                dict[innerStaffIdNA] = innerDdbAppDetailsList;
+            }
+            await queryInnerForNA(staffId, parentIndex, childIndex + 1);
+        }
+    }
+
+    async function queryInner(staffId, parentIndex, childIndex) {
+        const innerStaffList = staffIndexList[staffId];
+        if (childIndex === innerStaffList.length) {
+            dict[staffId] = ddbAppDetailsList;
+            return; // All inner staff processed for this parent
+        } else {
+            const innerStaffId = innerStaffList[childIndex].STF_ID; // Corrected syntax
+            const innerTableParams = {
+                TableName: "APP_DETAILS",
+                IndexName: "STF_ID-CREATION_DT-index",
+                KeyConditionExpression: "#STF_ID = :stfId AND #CREATION_DT >= :sysdate",
+                ExpressionAttributeNames: {
+                    "#STF_ID": "STF_ID",
+                    "#CREATION_DT": "CREATION_DT",
+                },
+                ExpressionAttributeValues: {
+                    ":stfId": innerStaffId,
+                    ":sysdate": dateStringCM,
+                },
+                ScanIndexForward: false,
+            };
+
+            let lastEvaluatedKey;
+            do {
+                try {
+                    const command = new QueryCommand(innerTableParams);
+                    const data = await myDocumentClient.send(command);
+
+                    if (data && data.Items && data.Items.length > 0) {
+                        for (const item of data.Items) {
+                            const mapApp = setAppData(item);
+                            ddbAppDetailsList.push(mapApp);
+                        }
+                    }
+                    lastEvaluatedKey = data.LastEvaluatedKey;
+                    innerTableParams.ExclusiveStartKey = lastEvaluatedKey;
+                } catch (err) {
+                    console.error("Error querying inner data for staffId:", innerStaffId, err);
+                    throw err;
+                }
+            } while (lastEvaluatedKey);
+
+            await queryInner(staffId, parentIndex, childIndex + 1);
+        }
+    }
+
+    async function queryAppDetailsWithChannelId(index) {
+        if (index === staffIndexList.length) {
+            return; // All channels processed
+        } else {
+            await queryAppDetailsPU(index);
+            await queryAppDetailsWithChannelId(index + 1); // Recurse for the next channel
+        }
+    }
+
+    async function queryAppDetailsPU(index) {
+        const channelId = staffIndexList[index].CHANNEL_ID;
+        const appTableParams = {
+            TableName: "APP_DETAILS",
+            IndexName: "CHANNEL_ID-CREATION_DT-index",
+            KeyConditionExpression: "#CHANNEL_ID = :channelId AND #CREATION_DT >= :sysdate",
+            ExpressionAttributeNames: {
+                "#CHANNEL_ID": "CHANNEL_ID",
+                "#CREATION_DT": "CREATION_DT",
+            },
+            ExpressionAttributeValues: {
+                ":channelId": channelId,
+                ":sysdate": dateString,
+            },
+            ScanIndexForward: false,
+        };
+
+        ddbAppDetailsList = [];
+        let lastEvaluatedKey;
+        do {
+            try {
+                const command = new QueryCommand(appTableParams);
+                const data = await myDocumentClient.send(command);
+
+                if (data && data.Items && data.Items.length > 0) {
+                    data.Items.forEach((itemData) => {
+                        const mapApp = setAppData(itemData);
+                        ddbAppDetailsList.push(mapApp);
+                    });
+                }
+                lastEvaluatedKey = data.LastEvaluatedKey;
+                appTableParams.ExclusiveStartKey = lastEvaluatedKey;
+            } catch (err) {
+                console.error("Error querying data for PU channelId:", channelId, err);
+                throw err;
+            }
+        } while (lastEvaluatedKey);
+
+        dict[channelId] = ddbAppDetailsList;
+    }
+
+    function setAppData(items) {
+        if (!items) {
+            return {};
+        }
+        return {
+            appId: items.APP_ID,
+            staffId: items.STF_ID,
+            aapsId: items.AAPS_ID,
+            aapStatus: items.AAPS_STATUS,
+            additionalData: items.ADDITIONAL_DATA,
+            applstatus: items.APPL_STATUS,
+            bureaustatus: items.BUREAU_STATUS,
+            campaignId: items.CAMPAIGN_ID,
+            cardApplied: items.CARD_TYPE,
+            channelId: items.CHANNEL_ID,
+            cid: items.CID,
+            appCompletionDate: items.COMPLETION_DT,
+            appCreationDate: items.CREATION_DT,
+            custDob: items.CUST_DOB,
+            custEmail: items.CUST_EMAIL,
+            customerID: items.CUST_ID,
+            custLname: items.CUST_LNAME,
+            customerName: items.CUST_NAME,
+            homeCountry: items.HOME_COUNTRY,
+            idType: items.ID_TYPE,
+            isLead: items.IS_LEAD,
+            mobileNumber: items.MOB_NUM,
+            otpVerifyStatus: items.OTP_VERIFY_STATUS,
+            remarks: items.REMARKS,
+            srcUrl: items.SRC_URL,
+            staffName: items.STF_NAME,
+            homeBlock: items.HOME_BLOCK,
+            homeCity: items.HOME_CITY,
+            homeProvince: items.HOME_PROVINCE,
+            homeStreet: items.HOME_STREET,
+            homeZipcode: items.HOME_ZIPCODE,
+            custMname: items.CUST_MNAME,
+            jumioCustRef: items.JUMIO_CUST_REF,
+            creditCardNum: items.CREDIT_CARD_NUM,
+            apeMessage: items.APEMESSAGE,
+            apeResponseBody: items.APEResponseBody,
+            apeStatusCode: items.APEStatusCode,
+            apeId: items.APE_ID,
+            homeAdd1: items.HOME_ADD1,
+            homeAdd2: items.HOME_ADD2,
+            homeAdd3: items.HOME_ADD3,
+            promoCode: items.VOUCHER_CODE,
+            idTypeValue: items.ID_TYPE_VALUE,
+            staffTimestamp: items.STAFFTIMESTAMP,
+            followupStatus: items.FOLLOWUPSTATUS,
+            remarksOnly: items.REMARKSONLY,
+        };
+    }
 };
