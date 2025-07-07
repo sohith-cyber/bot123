@@ -1,253 +1,239 @@
-import { LambdaClient } from "@aws-sdk/client-lambda";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+var AWS = require("aws-sdk");
+var lambda = new AWS.Lambda();
 
-const lambda = new LambdaClient();
-const ddbClient = new DynamoDBClient({});
-const myDocumentClient = DynamoDBDocumentClient.from(ddbClient);
+var myDocumentClient = new AWS.DynamoDB.DocumentClient();
+exports.handler = function (event, context, callback) {
 
-export const handler = async (event, context, callback) => {
-    let staffIdSearchKeyList = [];
-    let nonStaffIdSearchKeyList = [];
-    let searchAppDetailsList = [];
+    var eventNew = JSON.parse(event.body);
 
-    const { role, dateString, searchKey, staffId, ddbStaffMappingList: staffIndexList } = event; // Destructure event for cleaner access
-    const searchKeyUpper = searchKey.toUpperCase(); // Renamed to avoid conflict and be more descriptive
+    var { staffId, key } = eventNew;
 
-    const searchDict = {};
+    var role = null;
+    var channelId = null;
+    var rangeDate = null;
+    var dateString = null;
+    var ddbStaffMappingList = [];
+    var getStaffList = null;
+    var eventQueryAppDetails = null;
+    var leadQueryAppDetails = null;
+    //final response format
+    var responseBody = null;
+    var responseFinal = null;
 
-    try {
-        if (role === "TM" || role === "TL" || role === "CM") {
-            getStaffIdSearchKeyList(staffIndexList, searchKeyUpper, staffIdSearchKeyList, nonStaffIdSearchKeyList);
-            await nonStaffIdSearch(0, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList);
-            await withStaffIdSearch(0, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList);
-        } else if (role === "PU") {
-            await withChannelIdSearch(0, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList);
-        } else {
-            return setResponseFinal("Role does not exist");
-        }
+    if (event.body !== undefined && key !== undefined) {
 
-        return setResponseFinal(
-            JSON.stringify(searchDict, (key, value) => {
-                if (typeof value === 'bigint' || value > Number.MAX_SAFE_INTEGER) { // Handle BigInt for large numbers
-                    return value.toString();
+        var paramsStaff = {
+            FunctionName: "getStaffDetailsLMS",
+            InvocationType: "RequestResponse",
+            LogType: "Tail",
+            Payload: JSON.stringify({ staffId }, null, 2)
+        };
+
+        lambda.invoke(paramsStaff, function (err, data) {
+            if (err) {
+                onError(err, callback);
+            } else {
+                var dataItems = JSON.parse(data.Payload);
+                var resp = JSON.parse(dataItems.body);
+                if (
+                    (resp.response != null || resp.response != undefined) &&
+                    resp.response.isExist == true
+                ) {
+                    role = resp.response.role;
+                    staffId = resp.response.stfId;
+                    channelId = resp.response.channelId;
+                    rangeDate = new Date(new Date().setDate(new Date().getDate() - 90));
+                    dateString = rangeDate.toISOString();
+                    searchAppByRole();
+                } else {
+                    responseBody = {
+                        respType: "000",
+                        response: "Agent does not exist. Please add agent before proceeding",
+                    };
+                    responseFinal = setResponseFinal(responseBody);
+                    callback(null, responseFinal);
                 }
-                return value;
-            })
-        );
-
-    } catch (e) {
-        console.error("Error in handler:", e); // Use console.error for errors
-        return setResponseFinal({ statusCode: 500, body: JSON.stringify({ error: e.message || "Internal Server Error" }) });
+            }
+        });
     }
-};
 
-const getStaffIdSearchKeyList = (staffIndexList, searchKeyUpper, staffIdSearchKeyList, nonStaffIdSearchKeyList) => {
-    staffIndexList.forEach(x => {
-        if (x.STF_ID.includes(searchKeyUpper)) { // Use .includes() instead of .indexOf() != -1
-            staffIdSearchKeyList.push(x.STF_ID);
+    function searchAppByRole() {
+        if (role === "TM") {
+            searchForTM();
+        } else if (role === "TL") {
+            searchForTL();
+        } else if (role === "CM") {
+            searchForCM();
+        } else if (role == "PU") {
+            searchForPU();
         } else {
-            nonStaffIdSearchKeyList.push(x.STF_ID);
+            responseBody = {
+                respType: "000",
+                response: "Role is not authorized to perform any action.",
+            };
+            responseFinal = setResponseFinal(responseBody);
+            callback(null, responseFinal);
         }
-    });
-};
-
-const withStaffIdSearch = async (index, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList) => {
-    if (index === staffIdSearchKeyList.length) {
-        return; // Base case for recursion
     }
 
-    const STF_ID = staffIdSearchKeyList[index];
-    let staffIdTableParams = {
-        TableName: "APP_DETAILS",
-        IndexName: "STF_ID-CREATION_DT-index",
-        KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
-        ExpressionAttributeNames: {
-            "#CREATION_DT": "CREATION_DT",
-            "#STF_ID": "STF_ID",
-        },
-        ExpressionAttributeValues: {
-            ":dateString": dateString,
-            ":STF_ID": STF_ID,
-        },
-    };
-
-    try {
-        const queryResults = [];
-        let ExclusiveStartKey;
-
-        do {
-            const command = new QueryCommand(staffIdTableParams);
-            const data = await myDocumentClient.send(command);
-
-            data.Items.forEach(itemData => {
-                queryResults.push(setAppData(itemData));
-            });
-
-            ExclusiveStartKey = data.LastEvaluatedKey;
-            staffIdTableParams.ExclusiveStartKey = ExclusiveStartKey;
-
-        } while (ExclusiveStartKey);
-
-        searchDict[STF_ID] = queryResults;
-        await withStaffIdSearch(index + 1, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList); // Recursive call
-    } catch (e) {
-        console.error("Error while querying data for withStaffIdSearch:", e);
-        throw e; // Re-throw to be caught by the main handler
-    }
-};
-
-const nonStaffIdSearch = async (index, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList) => {
-    if (index === nonStaffIdSearchKeyList.length) {
-        return; // Base case for recursion
+    function searchForTM() {
+        ddbStaffMappingList = [
+            {
+                STF_ID: staffId,
+            },
+        ];
+        eventQueryAppDetails = setStaffMappingParams(ddbStaffMappingList);
+        callSearchAppDetailsLambdaLMS(eventQueryAppDetails);
     }
 
-    const STF_ID = nonStaffIdSearchKeyList[index];
-    let nonStaffIdTableParams = {
-        TableName: "APP_DETAILS",
-        IndexName: "STF_ID-CREATION_DT-index",
-        KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
-        FilterExpression: "contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains (CUST_MNAME, :searchKey) OR contains(CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
-        ExpressionAttributeNames: {
-            "#STF_ID": "STF_ID",
-            "#CREATION_DT": "CREATION_DT",
-        },
-        ExpressionAttributeValues: {
-            ":STF_ID": STF_ID,
-            ":searchKey": searchKeyUpper,
-            ":dateString": dateString,
-        },
-    };
-
-    try {
-        const queryResults = [];
-        let ExclusiveStartKey;
-
-        do {
-            const command = new QueryCommand(nonStaffIdTableParams);
-            const data = await myDocumentClient.send(command);
-
-            data.Items.forEach(itemData => {
-                queryResults.push(setAppData(itemData));
-            });
-
-            ExclusiveStartKey = data.LastEvaluatedKey;
-            nonStaffIdTableParams.ExclusiveStartKey = ExclusiveStartKey;
-
-        } while (ExclusiveStartKey);
-
-        searchDict[STF_ID] = queryResults;
-        await nonStaffIdSearch(index + 1, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList); // Recursive call
-    } catch (e) {
-        console.error("Error while querying data for nonStaffIdSearch:", e);
-        throw e;
-    }
-};
-
-const withChannelIdSearch = async (index, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList) => {
-    if (index === staffIndexList.length) {
-        return; // Base case for recursion
+    function searchForTL() {
+        getStaffList = {
+            TableName: "STF_MAPPING",
+            IndexName: "MGR_ID-index",
+            KeyConditionExpression: "#MGR_ID = :staffId",
+            ExpressionAttributeNames: {
+                "#MGR_ID": "MGR_ID",
+            },
+            ExpressionAttributeValues: {
+                ":staffId": staffId,
+            },
+            ProjectionExpression: "STF_ID",
+        };
+        ddbStaffMappingList = [{ STF_ID: staffId }];
+        myDocumentClient.query(getStaffList, queryStaffMappingTable);
     }
 
-    const channelId = staffIndexList[index].CHANNEL_ID;
-    let fullTableparams = {
-        TableName: "APP_DETAILS",
-        IndexName: "CHANNEL_ID-CREATION_DT-index",
-        KeyConditionExpression: "CHANNEL_ID = :channelId AND CREATION_DT >= :dateString",
-        FilterExpression: "contains (STF_ID, :searchKey) OR contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains(CUST_MNAME, :searchKey) OR contains (CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
-        ExpressionAttributeValues: {
-            ":channelId": channelId,
-            ":searchKey": searchKeyUpper,
-            ":dateString": dateString,
-        },
-    };
-
-    try {
-        const queryResults = [];
-        let ExclusiveStartKey;
-
-        do {
-            const command = new QueryCommand(fullTableparams);
-            const data = await myDocumentClient.send(command);
-
-            data.Items.forEach(itemData => {
-                queryResults.push(setAppData(itemData));
-            });
-
-            ExclusiveStartKey = data.LastEvaluatedKey;
-            fullTableparams.ExclusiveStartKey = ExclusiveStartKey;
-
-        } while (ExclusiveStartKey);
-
-        searchDict[channelId] = queryResults;
-        await withChannelIdSearch(index + 1, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList); // Recursive call
-    } catch (e) {
-        console.error("Error while querying data for withChannelIdSearch:", e);
-        throw e;
+    function searchForCM() {
+        getStaffList = {
+            TableName: "STF_MAPPING",
+            IndexName: "CHANNEL_ID-index",
+            KeyConditionExpression: "CHANNEL_ID = :channelId",
+            FilterExpression: "#Staff_Role = :TM OR #Staff_Role = :TL",
+            ExpressionAttributeNames: { "#Staff_Role": "ROLE" },
+            ExpressionAttributeValues: {
+                ":channelId": channelId,
+                ":TM": "TM",
+                ":TL": "TL",
+            },
+            ProjectionExpression: "STF_ID",
+        };
+        myDocumentClient.query(getStaffList, queryStaffMappingTable);
     }
-};
 
-const setResponseFinal = (responseBody) => {
-    return {
-        statusCode: 200,
-        headers: {
-            "Access-Control-Allow-Origin": "*",
-        },
-        body: typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody),
-        isBase64Encoded: false,
-    };
-};
-
-const setAppData = (items) => {
-    if (!items) { // Handle undefined items gracefully
-        return {};
+    function searchForPU() {
+        //for PU
+        getStaffList = {
+            TableName: "CHNL_MAPPING",
+            ProjectionExpression: "CHANNEL_ID",
+        };
+        myDocumentClient.scan(getStaffList, onScanChnlMapping);
     }
-    return {
-        appId: items.APP_ID,
-        staffId: items.STF_ID,
-        aapId: items.AAPS_ID,
-        aspStatus: items.AAPS_STATUS,
-        additionalData: items.ADDITIONAL_DATA,
-        applStatus: items.APPL_STATUS,
-        bureauStatus: items.BUREAU_STATUS,
-        campaignId: items.CAMPAIGN_ID,
-        cardApplied: items.CARD_TYPE,
-        channelId: items.CHANNEL_ID,
-        cId: items.CID,
-        appCompletionDate: items.COMPLETION_DT,
-        appCreationDate: items.CREATION_DT,
-        custDob: items.CUST_DOB,
-        custEmail: items.CUST_EMAIL,
-        customerID: items.CUST_ID,
-        custLname: items.CUST_LNAME,
-        customerName: items.CUST_NAME,
-        homeCountry: items.HOME_COUNTRY,
-        idType: items.ID_TYPE,
-        isLead: items.IS_LEAD,
-        mobileNumber: items.MOB_NUM,
-        otpVerifyStatus: items.OTP_VERIFY_STATUS,
-        remarks: items.REMARKS,
-        srcUrl: items.SRC_URL,
-        staffName: items.STF_NAME,
-        homeBlock: items.HOME_BLOCK,
-        homeCity: items.HOME_CITY,
-        homeProvince: items.HOME_PROVINCE,
-        homeStreet: items.HOME_STREET,
-        homeZipcode: items.HOME_ZIPCODE,
-        custMName: items.CUST_MNAME,
-        omniCreditCardNo: items.OMNIO_CUST_REF,
-        creditCardNum: items.CARD_NUMBER,
-        message: items.APPMESSAGE,
-        responseBody: items.APPResponseBody,
-        appStatus: items.APPStatus,
-        appIdNew: items.APP_ID,
-        homeAdd1: items.HOME_ADD1,
-        homeAdd2: items.HOME_ADD2,
-        homeAdd3: items.HOME_ADD3,
-        promoted: items.VOUCHER_CODE,
-        idpValue: items.ID_TYPE_VALUE,
-        staffTime: items.STAFFTIMESTAMP,
-        followUpStatus: items.FOLLOWUPSTATUS,
-        remarksNew: items.REMARKSNEW,
-    };
+
+    function queryStaffMappingTable(err, data) {
+        try {
+            if (err) {
+                onError(err, callback);
+            } else {
+                data.Items.forEach(function (itemData) {
+                    ddbStaffMappingList.push(itemData);
+                });
+
+                if (typeof data.LastEvaluatedKey != "undefined") {
+                    getStaffList.ExclusiveStartKey = data.LastEvaluatedKey;
+                    myDocumentClient.query(getStaffList, queryStaffMappingTable);
+                } else {
+                    eventQueryAppDetails = setStaffMappingParams();
+                    callSearchAppDetailsLambdaLMS(eventQueryAppDetails);
+                }
+            }
+        } catch (e) {
+            console.log("Error while querying table");
+        }
+    }
+
+    function onScanChnlMapping(err, data) {
+        try {
+            if (err) {
+                onError(err, callback);
+            } else {
+                data.Items.forEach(function (itemData) {
+                    ddbStaffMappingList.push(itemData);
+                });
+                if (typeof data.LastEvaluatedKey != "undefined") {
+                    getStaffList.ExclusiveStartKey = data.LastEvaluatedKey;
+                    myDocumentClient.scan(getStaffList, onScanChnlMapping);
+                } else {
+                    eventQueryAppDetails = setStaffMappingParams();
+                    callSearchAppDetailsLambdaLMS(eventQueryAppDetails);
+                }
+            }
+        } catch (e) {
+            console.log("Error while querying table");
+        }
+    }
+
+    function callSearchAppDetailsLambdaLMS(eventQueryAppDetails) {
+        var searchParams = {
+            FunctionName: "SearchAppDetailsLambdaLMS",
+            InvocationType: "RequestResponse",
+            LogType: "Tail",
+            Payload: JSON.stringify(eventQueryAppDetails, null, 2),
+        };
+        lambda.invoke(searchParams, function (err, data) {
+            if (err) {
+                onError(err, callback);
+            } else {
+                responseBody = {
+                    respType: "001",
+                    response: "Success",
+                    role: role,
+                    appData: JSON.parse(data.Payload),
+                };
+                responseFinal = setResponseFinal(responseBody);
+                callback(null, responseFinal);
+            }
+        });
+    }
+
+    function setStaffMappingParams() {
+        var eventQueryAppDetails = {
+            ddbStaffMappingList: ddbStaffMappingList,
+            staffId: staffId,
+            dateString: dateString,
+            channelId: channelId,
+            role: role,
+            searchKey: key,
+        };
+        return eventQueryAppDetails;
+    }
+
+    function setLeadMappingParams() {
+        var leadDetails = {
+            dateString: dateString,
+            role: role,
+            searchKey: key,
+        };
+        return leadDetails;
+    }
+
+    //common function for errors
+    function onError(err, callback) {
+        var responseFail = {
+            statusCode: 500,
+            headers: { "Access-Control-Allow-Origin": "*" },
+            body: err,
+            isBase64Encoded: false,
+        };
+        callback(null, responseFail);
+    }
+
+    function setResponseFinal(responseBody) {
+        let responseParam = {
+            statusCode: 200,
+            headers: { "Access-Control-Allow-Origin": "*" },
+            body: JSON.stringify(responseBody),
+            isBase64Encoded: false,
+        };
+        return responseParam;
+    }
 };
