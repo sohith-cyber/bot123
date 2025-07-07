@@ -1,285 +1,253 @@
-var AWS = require("aws-sdk");
-var lambda = new AWS.Lambda();
+import { LambdaClient } from "@aws-sdk/client-lambda";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-exports.handler = function (event, context, callback) {
+const lambda = new LambdaClient();
+const ddbClient = new DynamoDBClient({});
+const myDocumentClient = DynamoDBDocumentClient.from(ddbClient);
 
-    var myDocumentClient = new AWS.DynamoDB.DocumentClient();
+export const handler = async (event, context, callback) => {
+    let staffIdSearchKeyList = [];
+    let nonStaffIdSearchKeyList = [];
+    let searchAppDetailsList = [];
 
-    var staffIdTableParams = null;
-    var staffIdSearchKeyList = []; 
-    var nonStaffIdTableParams = null;
-    var nonStaffIdSearchKeyList = []; 
-    var fullTableparams = null;
-    var leadTableParams = null;
-    var searchAppDetailsList = [];
+    const { role, dateString, searchKey, staffId, ddbStaffMappingList: staffIndexList } = event; // Destructure event for cleaner access
+    const searchKeyUpper = searchKey.toUpperCase(); // Renamed to avoid conflict and be more descriptive
 
-    var role = event.role;
-    var dateString = event.dateString;
-    var searchKey = event.searchKey.toUpperCase();
-    var channelId = event.channelid;
-    var staffIndexList = event.ddbStaffMappingList; 
-    var staffid = event.staffid;
+    const searchDict = {};
 
-    var responseBody = null;
-    var responseFinal = null;
-    var searchDict = {};
-
-    if (role == "TM" || role === "TL" || role === "CM") {
-        getStaffIdSearchKeyList();
-        nonStaffIdSearch(0);
-    } else if (role == "PU") {
-        callback(null, "Role does not exist");
-    } else {
-        withChannelIdSearch(0);
-    }
-
-    function getStaffIdSearchKeyList() {
-        staffIndexList.filter(function (x) {
-            if (x.STF_ID.indexOf(searchKey) != -1) {
-                staffIdSearchKeyList.push(x.STF_ID);
-            } else {
-                nonStaffIdSearchKeyList.push(x.STF_ID);
-            }
-        });
-    }
-
-    function withStaffIdSearch(index) {
-        if (index == staffIdSearchKeyList.length) {
-            callback(
-                null,
-                JSON.stringify(searchDict, function (key, value) {
-                    if (value > Number.MAX_SAFE_INTEGER) {
-                        return value.toString() + "";
-                    } else {
-                        return value;
-                    }
-                }),
-            );
+    try {
+        if (role === "TM" || role === "TL" || role === "CM") {
+            getStaffIdSearchKeyList(staffIndexList, searchKeyUpper, staffIdSearchKeyList, nonStaffIdSearchKeyList);
+            await nonStaffIdSearch(0, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList);
+            await withStaffIdSearch(0, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList);
+        } else if (role === "PU") {
+            await withChannelIdSearch(0, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList);
         } else {
-            withStaffIdSearch_Util(index);
+            return setResponseFinal("Role does not exist");
         }
-    }
 
-    function withStaffIdSearch_Util(index) {
-        let STF_ID = staffIdSearchKeyList[index];
-        staffIdTableParams = {
-            TableName: "APP_DETAILS",
-            IndexName: "STF_ID-CREATION_DT-index",
-            KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
-            ExpressionAttributeNames: {
-                "#STF_ID": "STF_ID",
-                "#CREATION_DT": "CREATION_DT",
-            },
-            ExpressionAttributeValues: {
-                ":dateString": dateString,
-                ":STF_ID": STF_ID,
-            },
-        };
-
-        try {
-            searchAppDetailsList = [];
-            myDocumentClient.query(staffIdTableParams, onQueryTable);
-
-            function onQueryTable(err, data) {
-                if (err) {
-                    callback(err, null);
-                } else {
-                    let mapApp = null;
-                    data.Items.forEach(function (itemData) {
-                        mapApp = setAppData(itemData);
-                        searchAppDetailsList.push(mapApp);
-                    });
-
-                    if (typeof data.LastEvaluatedKey != "undefined") {
-                        staffIdTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-                        myDocumentClient.query(staffIdTableParams, onQueryTable());
-                    } else {
-                        searchDict[STF_ID] = searchAppDetailsList;
-                        withStaffIdSearch(index + 1);
-                    }
+        return setResponseFinal(
+            JSON.stringify(searchDict, (key, value) => {
+                if (typeof value === 'bigint' || value > Number.MAX_SAFE_INTEGER) { // Handle BigInt for large numbers
+                    return value.toString();
                 }
-            }
-        } catch (e) {
-            console.log("error while querying data ----", e);
-        }
-    }
+                return value;
+            })
+        );
 
-    function nonStaffIdSearch(index) {
-        if (index == nonStaffIdSearchKeyList.length) {
-            withStaffIdSearch(0);
+    } catch (e) {
+        console.error("Error in handler:", e); // Use console.error for errors
+        return setResponseFinal({ statusCode: 500, body: JSON.stringify({ error: e.message || "Internal Server Error" }) });
+    }
+};
+
+const getStaffIdSearchKeyList = (staffIndexList, searchKeyUpper, staffIdSearchKeyList, nonStaffIdSearchKeyList) => {
+    staffIndexList.forEach(x => {
+        if (x.STF_ID.includes(searchKeyUpper)) { // Use .includes() instead of .indexOf() != -1
+            staffIdSearchKeyList.push(x.STF_ID);
         } else {
-            nonStaffIdSearch_Util(index);
+            nonStaffIdSearchKeyList.push(x.STF_ID);
         }
+    });
+};
+
+const withStaffIdSearch = async (index, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList) => {
+    if (index === staffIdSearchKeyList.length) {
+        return; // Base case for recursion
     }
 
-    function nonStaffIdSearch_Util(index) {
-        let STF_ID = nonStaffIdSearchKeyList[index];
-        nonStaffIdTableParams = {
-            TableName: "APP_DETAILS",
-            IndexName: "STF_ID-CREATION_DT-index",
-            KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
-            FilterExpression: "contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains (CUST_MNAME, :searchKey) OR contains(CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
-            ExpressionAttributeNames: {
-                "#STF_ID": "STF_ID",
-                "#CREATION_DT": "CREATION_DT",
-            },
-            ExpressionAttributeValues: {
-                ":STF_ID": STF_ID,
-                ":searchKey": searchKey,
-                ":dateString": dateString,
-            },
-        };
+    const STF_ID = staffIdSearchKeyList[index];
+    let staffIdTableParams = {
+        TableName: "APP_DETAILS",
+        IndexName: "STF_ID-CREATION_DT-index",
+        KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
+        ExpressionAttributeNames: {
+            "#CREATION_DT": "CREATION_DT",
+            "#STF_ID": "STF_ID",
+        },
+        ExpressionAttributeValues: {
+            ":dateString": dateString,
+            ":STF_ID": STF_ID,
+        },
+    };
 
-        try {
-            searchAppDetailsList = [];
-            myDocumentClient.query(nonStaffIdTableParams, onQuerySearchApps);
+    try {
+        const queryResults = [];
+        let ExclusiveStartKey;
 
-            function onQuerySearchApps(err, data) {
-                if (err) {
-                    callback(err, null);
-                } else {
-                    let mapApp = null;
-                    data.Items.forEach(function (itemData) {
-                        mapApp = setAppData(itemData);
-                        searchAppDetailsList.push(mapApp);
-                    });
+        do {
+            const command = new QueryCommand(staffIdTableParams);
+            const data = await myDocumentClient.send(command);
 
-                    if (typeof data.LastEvaluatedKey != "undefined") {
-                        nonStaffIdTableParams.ExclusiveStartKey = data.LastEvaluatedKey;
-                        myDocumentClient.query(nonStaffIdTableParams, onQuerySearchApps);
-                    } else {
-                        searchDict[STF_ID] = searchAppDetailsList;
-                        nonStaffIdSearch(index + 1);
-                    }
-                }
-            }
-        } catch (e) {
-            console.log("error while qerying data");
-        }
+            data.Items.forEach(itemData => {
+                queryResults.push(setAppData(itemData));
+            });
+
+            ExclusiveStartKey = data.LastEvaluatedKey;
+            staffIdTableParams.ExclusiveStartKey = ExclusiveStartKey;
+
+        } while (ExclusiveStartKey);
+
+        searchDict[STF_ID] = queryResults;
+        await withStaffIdSearch(index + 1, staffIdSearchKeyList, dateString, searchDict, searchAppDetailsList); // Recursive call
+    } catch (e) {
+        console.error("Error while querying data for withStaffIdSearch:", e);
+        throw e; // Re-throw to be caught by the main handler
+    }
+};
+
+const nonStaffIdSearch = async (index, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList) => {
+    if (index === nonStaffIdSearchKeyList.length) {
+        return; // Base case for recursion
     }
 
-    function withChannelIdSearch(index) {
-        if (index == staffIndexList.length) {
-            callback(
-                null,
-                JSON.stringify(searchDict, function (key, value) {
-                    if (value > Number.MAX_SAFE_INTEGER) {
-                        return value.toString() + "";
-                    } else {
-                        return value;
-                    }
-                }),
-            );
-        } else {
-            fullSearchAppDetails(index);
-        }
+    const STF_ID = nonStaffIdSearchKeyList[index];
+    let nonStaffIdTableParams = {
+        TableName: "APP_DETAILS",
+        IndexName: "STF_ID-CREATION_DT-index",
+        KeyConditionExpression: "#STF_ID = :STF_ID AND #CREATION_DT >= :dateString",
+        FilterExpression: "contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains (CUST_MNAME, :searchKey) OR contains(CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
+        ExpressionAttributeNames: {
+            "#STF_ID": "STF_ID",
+            "#CREATION_DT": "CREATION_DT",
+        },
+        ExpressionAttributeValues: {
+            ":STF_ID": STF_ID,
+            ":searchKey": searchKeyUpper,
+            ":dateString": dateString,
+        },
+    };
+
+    try {
+        const queryResults = [];
+        let ExclusiveStartKey;
+
+        do {
+            const command = new QueryCommand(nonStaffIdTableParams);
+            const data = await myDocumentClient.send(command);
+
+            data.Items.forEach(itemData => {
+                queryResults.push(setAppData(itemData));
+            });
+
+            ExclusiveStartKey = data.LastEvaluatedKey;
+            nonStaffIdTableParams.ExclusiveStartKey = ExclusiveStartKey;
+
+        } while (ExclusiveStartKey);
+
+        searchDict[STF_ID] = queryResults;
+        await nonStaffIdSearch(index + 1, nonStaffIdSearchKeyList, searchKeyUpper, dateString, searchDict, searchAppDetailsList); // Recursive call
+    } catch (e) {
+        console.error("Error while querying data for nonStaffIdSearch:", e);
+        throw e;
+    }
+};
+
+const withChannelIdSearch = async (index, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList) => {
+    if (index === staffIndexList.length) {
+        return; // Base case for recursion
     }
 
-    function fullSearchAppDetails(index) {
-        let channelId = staffIndexList[index].CHANNEL_ID;
-        fullTableparams = {
-            TableName: "APP_DETAILS",
-            IndexName: "CHANNEL_ID-CREATION_DT-index",
-            KeyConditionExpression: "CHANNEL_ID = :channelid AND CREATION_DT >= :dateString",
-            FilterExpression: "contains (STF_ID, :searchKey) OR contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains(CUST_MNAME, :searchKey) OR contains (CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
-            ExpressionAttributeValues: {
-                ":channelid": channelId,
-                ":searchKey": searchKey,
-                ":dateString": dateString,
-            },
-        };
+    const channelId = staffIndexList[index].CHANNEL_ID;
+    let fullTableparams = {
+        TableName: "APP_DETAILS",
+        IndexName: "CHANNEL_ID-CREATION_DT-index",
+        KeyConditionExpression: "CHANNEL_ID = :channelId AND CREATION_DT >= :dateString",
+        FilterExpression: "contains (STF_ID, :searchKey) OR contains (STF_NAME, :searchKey) OR contains (CUST_NAME, :searchKey) OR contains(CUST_MNAME, :searchKey) OR contains (CUST_LNAME, :searchKey) OR contains (ID_TYPE_VALUE, :searchKey) OR contains (MOB_NUM, :searchKey)",
+        ExpressionAttributeValues: {
+            ":channelId": channelId,
+            ":searchKey": searchKeyUpper,
+            ":dateString": dateString,
+        },
+    };
 
-        try {
-            searchAppDetailsList = [];
-            myDocumentClient.query(fullTableparams, fullScanSearchApps);
+    try {
+        const queryResults = [];
+        let ExclusiveStartKey;
 
-            function fullScanSearchApps(err, data) {
-                if (err) {
-                    callback(err, null);
-                } else {
-                    let mapApp = null;
-                    data.Items.forEach(function (itemData) {
-                        mapApp = setAppData(itemData);
-                        searchAppDetailsList.push(mapApp);
-                    });
+        do {
+            const command = new QueryCommand(fullTableparams);
+            const data = await myDocumentClient.send(command);
 
-                    if (typeof data.LastEvaluatedKey != "undefined") {
-                        fullTableparams.ExclusiveStartKey = data.LastEvaluatedKey;
-                        myDocumentClient.query(fullTableparams, fullScanSearchApps);
-                    } else {
-                        searchDict[channelId] = searchAppDetailsList;
-                        withChannelIdSearch(index + 1);
-                    }
-                }
-            }
-        } catch (e) {
-            console.log("error while gerving data");
-        }
+            data.Items.forEach(itemData => {
+                queryResults.push(setAppData(itemData));
+            });
+
+            ExclusiveStartKey = data.LastEvaluatedKey;
+            fullTableparams.ExclusiveStartKey = ExclusiveStartKey;
+
+        } while (ExclusiveStartKey);
+
+        searchDict[channelId] = queryResults;
+        await withChannelIdSearch(index + 1, staffIndexList, searchKeyUpper, dateString, searchDict, searchAppDetailsList); // Recursive call
+    } catch (e) {
+        console.error("Error while querying data for withChannelIdSearch:", e);
+        throw e;
     }
+};
 
-    function setResponseFinal(responseBody) {
-        let responseParam = {
-            statusCode: 200,
-            headers: {
-                "Access-Control-Allow-Origin": "*",
-            },
-            body: JSON.stringify(responseBody),
-            isBase64Encoded: false,
-        };
-        return responseParam;
-    }
+const setResponseFinal = (responseBody) => {
+    return {
+        statusCode: 200,
+        headers: {
+            "Access-Control-Allow-Origin": "*",
+        },
+        body: typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody),
+        isBase64Encoded: false,
+    };
+};
 
-    function setAppData(items) {
-        let mapParam = {};
-        if (items != undefined) {
-            mapParam = {
-                appId: items.APP_ID,
-                stafid: items.STF_ID,
-                aapId: items.AAPS_ID,
-                appStatus: items.AAPS_STATUS,
-                additionalData: items.ADDITIONAL_DATA,
-                applStatus: items.APPL_STATUS,
-                bureauStatus: items.BUREAU_STATUS,
-                campaignId: items.CAMPAIGN_ID,
-                channelId: items.CHANNEL_ID,
-                cifId: items.CIF,
-                appCompletionDate: items.COMPLETION_DT,
-                appCreationDate: items.CREATION_DT,
-                custDob: items.CUST_DOB,
-                custEmail: items.CUST_EMAIL,
-                customerId: items.CUST_ID,
-                custLname: items.CUST_LNAME,
-                custMname: items.CUST_MNAME,
-                homeCountry: items.HOME_COUNTRY,
-                idType: items.ID_TYPE,
-                isLead: items.IS_LEAD,
-                mobileNumber: items.MOB_NUM,
-                otpVerifyStatus: items.OTP_VERIFY_STATUS,
-                remarks: items.REMARKS,
-                srcUrl: items.SRC_URL,
-                stfName: items.STF_NAME,
-                homeBlock: items.HOME_BLOCK,
-                homeCity: items.HOME_CITY,
-                homeProvince: items.HOME_PROVINCE,
-                homeStreet: items.HOME_STREET,
-                homeZipcode: items.HOME_ZIPCODE,
-                custSName: items.CUST_SNAME,
-                omniCreditCardNo: items.OMNIO_CUST_REF,
-                creditCardNum: items.CARD_NUMBER,
-                message: items.APPMESSAGE,
-                responseBody: items.APPResponseBody,
-                appStatus: items.APPStatus,
-                appIdNew: items.APP_ID,
-                homeAdd1: items.HOME_ADD1,
-                homeAdd2: items.HOME_ADD2,
-                homeAdd3: items.HOME_ADD3,
-                promoted: items.VOUCHER_CODE,
-                idpValue: items.ID_TYPE_VALUE,
-                staffTime: items.STAFFTIMESTAMP,
-                followUpStatus: items.FOLLOWUPSTATUS,
-                remarksNew: items.REMARKSNEW,
-            };
-        }
-        return mapParam;
+const setAppData = (items) => {
+    if (!items) { // Handle undefined items gracefully
+        return {};
     }
+    return {
+        appId: items.APP_ID,
+        staffId: items.STF_ID,
+        aapId: items.AAPS_ID,
+        aspStatus: items.AAPS_STATUS,
+        additionalData: items.ADDITIONAL_DATA,
+        applStatus: items.APPL_STATUS,
+        bureauStatus: items.BUREAU_STATUS,
+        campaignId: items.CAMPAIGN_ID,
+        cardApplied: items.CARD_TYPE,
+        channelId: items.CHANNEL_ID,
+        cId: items.CID,
+        appCompletionDate: items.COMPLETION_DT,
+        appCreationDate: items.CREATION_DT,
+        custDob: items.CUST_DOB,
+        custEmail: items.CUST_EMAIL,
+        customerID: items.CUST_ID,
+        custLname: items.CUST_LNAME,
+        customerName: items.CUST_NAME,
+        homeCountry: items.HOME_COUNTRY,
+        idType: items.ID_TYPE,
+        isLead: items.IS_LEAD,
+        mobileNumber: items.MOB_NUM,
+        otpVerifyStatus: items.OTP_VERIFY_STATUS,
+        remarks: items.REMARKS,
+        srcUrl: items.SRC_URL,
+        staffName: items.STF_NAME,
+        homeBlock: items.HOME_BLOCK,
+        homeCity: items.HOME_CITY,
+        homeProvince: items.HOME_PROVINCE,
+        homeStreet: items.HOME_STREET,
+        homeZipcode: items.HOME_ZIPCODE,
+        custMName: items.CUST_MNAME,
+        omniCreditCardNo: items.OMNIO_CUST_REF,
+        creditCardNum: items.CARD_NUMBER,
+        message: items.APPMESSAGE,
+        responseBody: items.APPResponseBody,
+        appStatus: items.APPStatus,
+        appIdNew: items.APP_ID,
+        homeAdd1: items.HOME_ADD1,
+        homeAdd2: items.HOME_ADD2,
+        homeAdd3: items.HOME_ADD3,
+        promoted: items.VOUCHER_CODE,
+        idpValue: items.ID_TYPE_VALUE,
+        staffTime: items.STAFFTIMESTAMP,
+        followUpStatus: items.FOLLOWUPSTATUS,
+        remarksNew: items.REMARKSNEW,
+    };
 };
