@@ -11,39 +11,52 @@ export const handler = async (event, context, callback) => {
     let channelId = null;
     let rangeDate = null;
     let dateString = null;
-    let ddbStaffMappingList = [];
-    let getStaffList = null;
-    let eventQueryAppDetails = null;
+    // ddbStaffMappingList needs to be mutable and passed by reference or built up
+    // in an async way and then passed. Initializing here for the scope of the handler.
+    let ddbStaffMappingList = []; 
     let responseBody = null;
     let responseFinal = null;
+    let staffId = null;
+    let key = null;
 
     try {
         const eventNew = JSON.parse(event.body);
-        const { staffId, key } = eventNew;
+        staffId = eventNew.staffId;
+        key = eventNew.key;
 
         if (event.body !== undefined && key !== undefined) {
             const paramsStaff = {
                 FunctionName: "getStaffDetailsLMS",
                 InvocationType: "RequestResponse",
                 LogType: "Tail",
-                Payload: JSON.stringify({ staffId }, null, 2),
+                // Ensure payload is a stringified JSON object
+                Payload: JSON.stringify({ staffId }, null, 2), 
             };
 
             const command = new InvokeCommand(paramsStaff);
             const data = await lambdaClient.send(command);
 
-            const dataItems = JSON.parse(Buffer.from(data.Payload).toString());
-            const resp = JSON.parse(dataItems.body);
+            let dataItems;
+            let resp;
 
-            if ((resp.response != null || resp.response != undefined) && resp.response.isExist === true) {
+            try {
+                // Ensure data.Payload is converted from Uint8Array to string before parsing
+                dataItems = JSON.parse(Buffer.from(data.Payload).toString());
+                resp = JSON.parse(dataItems.body);
+            } catch (parseError) {
+                console.error("Error parsing getStaffDetailsLMS payload:", parseError);
+                console.error("Raw getStaffDetailsLMS Payload:", data.Payload ? Buffer.from(data.Payload).toString() : "Payload was null/undefined");
+                return onError(parseError, callback);
+            }
+            
+            if ((resp.response !== null && resp.response !== undefined) && resp.response.isExist === true) {
                 role = resp.response.role;
-                // Reassigning staffId, though it's already destructured from eventNew.
-                // This might be redundant if resp.response.stfId is always the same as the input staffId.
                 staffId = resp.response.stfId; 
                 channelId = resp.response.channelId;
                 rangeDate = new Date(new Date().setDate(new Date().getDate() - 90));
                 dateString = rangeDate.toISOString();
                 
+                // Pass all necessary context variables to searchAppByRole
                 await searchAppByRole(role, staffId, channelId, ddbStaffMappingList, dateString, key, callback);
             } else {
                 responseBody = {
@@ -51,10 +64,18 @@ export const handler = async (event, context, callback) => {
                     response: "Agent does not exist. Please add agent before proceeding",
                 };
                 responseFinal = setResponseFinal(responseBody);
-                return responseFinal; // Return early for agent not found
+                return callback(null, responseFinal); // Use callback to return final response
             }
+        } else {
+            responseBody = {
+                respType: "000",
+                response: "Missing event body or key.",
+            };
+            responseFinal = setResponseFinal(responseBody);
+            return callback(null, responseFinal);
         }
     } catch (err) {
+        // Catch any errors from the initial invocation or parsing and pass to onError
         return onError(err, callback);
     }
 };
@@ -62,16 +83,16 @@ export const handler = async (event, context, callback) => {
 const searchAppByRole = async (role, staffId, channelId, ddbStaffMappingList, dateString, key, callback) => {
     switch (role) {
         case "TM":
-            await searchForTM(staffId, ddbStaffMappingList, dateString, channelId, key);
+            await searchForTM(staffId, ddbStaffMappingList, dateString, channelId, role, key, callback);
             break;
         case "TL":
-            await searchForTL(staffId, ddbStaffMappingList, dateString, channelId, key, callback);
+            await searchForTL(staffId, ddbStaffMappingList, dateString, channelId, role, key, callback);
             break;
         case "CM":
-            await searchForCM(staffId, channelId, ddbStaffMappingList, dateString, key, callback);
+            await searchForCM(staffId, channelId, ddbStaffMappingList, dateString, role, key, callback);
             break;
         case "PU":
-            await searchForPU(staffId, ddbStaffMappingList, dateString, channelId, key, callback);
+            await searchForPU(staffId, ddbStaffMappingList, dateString, channelId, role, key, callback);
             break;
         default:
             const responseBody = {
@@ -79,18 +100,18 @@ const searchAppByRole = async (role, staffId, channelId, ddbStaffMappingList, da
                 response: "Role is not authorized to perform any action.",
             };
             const responseFinal = setResponseFinal(responseBody);
-            callback(null, responseFinal); // Using callback for unauthorized role, consistent with original.
+            callback(null, responseFinal); // Use callback for unauthorized role
             break;
     }
 };
 
-const searchForTM = async (staffId, ddbStaffMappingList, dateString, channelId, key) => {
+const searchForTM = async (staffId, ddbStaffMappingList, dateString, channelId, role, key, callback) => {
     ddbStaffMappingList.push({ STF_ID: staffId });
     const eventQueryAppDetails = setStaffMappingParams(ddbStaffMappingList, staffId, dateString, channelId, role, key);
-    await callSearchAppDetailsLambdaLMS(eventQueryAppDetails);
+    await callSearchAppDetailsLambdaLMS(eventQueryAppDetails, role, callback); // Pass role and callback
 };
 
-const searchForTL = async (staffId, ddbStaffMappingList, dateString, channelId, key, callback) => {
+const searchForTL = async (staffId, ddbStaffMappingList, dateString, channelId, role, key, callback) => {
     const getStaffListParams = {
         TableName: "STF_MAPPING",
         IndexName: "MGR_ID-index",
@@ -100,11 +121,12 @@ const searchForTL = async (staffId, ddbStaffMappingList, dateString, channelId, 
         ProjectionExpression: "STF_ID",
     };
     
-    ddbStaffMappingList.push({ STF_ID: staffId }); // Include the TL's own staffId
-    await queryStaffMappingTable(getStaffListParams, ddbStaffMappingList, dateString, channelId, role, key, callback);
+    // Include the TL's own staffId at the start of the list
+    ddbStaffMappingList.push({ STF_ID: staffId }); 
+    await queryStaffMappingTable(getStaffListParams, ddbStaffMappingList, staffId, dateString, channelId, role, key, callback);
 };
 
-const searchForCM = async (staffId, channelId, ddbStaffMappingList, dateString, key, callback) => {
+const searchForCM = async (staffId, channelId, ddbStaffMappingList, dateString, role, key, callback) => {
     const getStaffListParams = {
         TableName: "STF_MAPPING",
         IndexName: "CHANNEL_ID-index",
@@ -118,18 +140,18 @@ const searchForCM = async (staffId, channelId, ddbStaffMappingList, dateString, 
         },
         ProjectionExpression: "STF_ID",
     };
-    await queryStaffMappingTable(getStaffListParams, ddbStaffMappingList, dateString, channelId, role, key, callback);
+    await queryStaffMappingTable(getStaffListParams, ddbStaffMappingList, staffId, dateString, channelId, role, key, callback);
 };
 
-const searchForPU = async (staffId, ddbStaffMappingList, dateString, channelId, key, callback) => {
+const searchForPU = async (staffId, ddbStaffMappingList, dateString, channelId, role, key, callback) => {
     const getStaffListParams = {
         TableName: "CHNL_MAPPING",
         ProjectionExpression: "CHANNEL_ID",
     };
-    await scanChnlMappingTable(getStaffListParams, ddbStaffMappingList, dateString, channelId, role, key, callback);
+    await scanChnlMappingTable(getStaffListParams, ddbStaffMappingList, staffId, dateString, channelId, role, key, callback);
 };
 
-const queryStaffMappingTable = async (getStaffListParams, ddbStaffMappingList, dateString, channelId, role, key, callback) => {
+const queryStaffMappingTable = async (getStaffListParams, ddbStaffMappingList, staffId, dateString, channelId, role, key, callback) => {
     try {
         let lastEvaluatedKey;
         do {
@@ -146,14 +168,14 @@ const queryStaffMappingTable = async (getStaffListParams, ddbStaffMappingList, d
         } while (lastEvaluatedKey);
 
         const eventQueryAppDetails = setStaffMappingParams(ddbStaffMappingList, staffId, dateString, channelId, role, key);
-        await callSearchAppDetailsLambdaLMS(eventQueryAppDetails, callback);
+        await callSearchAppDetailsLambdaLMS(eventQueryAppDetails, role, callback); // Pass role and callback
     } catch (e) {
         console.log("Error while querying table", e);
         return onError(e, callback);
     }
 };
 
-const scanChnlMappingTable = async (getStaffListParams, ddbStaffMappingList, dateString, channelId, role, key, callback) => {
+const scanChnlMappingTable = async (getStaffListParams, ddbStaffMappingList, staffId, dateString, channelId, role, key, callback) => {
     try {
         let lastEvaluatedKey;
         do {
@@ -170,14 +192,14 @@ const scanChnlMappingTable = async (getStaffListParams, ddbStaffMappingList, dat
         } while (lastEvaluatedKey);
 
         const eventQueryAppDetails = setStaffMappingParams(ddbStaffMappingList, staffId, dateString, channelId, role, key);
-        await callSearchAppDetailsLambdaLMS(eventQueryAppDetails, callback);
+        await callSearchAppDetailsLambdaLMS(eventQueryAppDetails, role, callback); // Pass role and callback
     } catch (e) {
         console.log("Error while scanning table", e);
         return onError(e, callback);
     }
 };
 
-const callSearchAppDetailsLambdaLMS = async (eventQueryAppDetails, callback) => {
+const callSearchAppDetailsLambdaLMS = async (eventQueryAppDetails, role, callback) => {
     try {
         const searchParams = {
             FunctionName: "SearchAppDetailsLambdaLMS",
@@ -189,11 +211,20 @@ const callSearchAppDetailsLambdaLMS = async (eventQueryAppDetails, callback) => 
         const command = new InvokeCommand(searchParams);
         const data = await lambdaClient.send(command);
 
+        let appData;
+        try {
+            appData = JSON.parse(Buffer.from(data.Payload).toString());
+        } catch (parseError) {
+            console.error("Error parsing SearchAppDetailsLambdaLMS payload:", parseError);
+            console.error("Raw SearchAppDetailsLambdaLMS Payload:", data.Payload ? Buffer.from(data.Payload).toString() : "Payload was null/undefined");
+            return onError(parseError, callback);
+        }
+
         const responseBody = {
             respType: "001",
             response: "Success",
-            role: role,
-            appData: JSON.parse(Buffer.from(data.Payload).toString()),
+            role: role, // Use the passed role
+            appData: appData,
         };
         const responseFinal = setResponseFinal(responseBody);
         callback(null, responseFinal);
@@ -202,34 +233,53 @@ const callSearchAppDetailsLambdaLMS = async (eventQueryAppDetails, callback) => 
     }
 };
 
-const setStaffMappingParams = (ddbStaffMappingList, staffId, dateString, channelId, role, key) => {
+// All parameters are now explicitly passed
+const setStaffMappingParams = (ddbStaffMappingList, staffId, dateString, channelId, role, searchKey) => {
     return {
         ddbStaffMappingList: ddbStaffMappingList,
         staffId: staffId,
         dateString: dateString,
         channelId: channelId,
         role: role,
-        searchKey: key,
+        searchKey: searchKey,
     };
 };
 
-const setLeadMappingParams = (dateString, role, key) => {
+// All parameters are now explicitly passed
+const setLeadMappingParams = (dateString, role, searchKey) => {
     return {
         dateString: dateString,
         role: role,
-        searchKey: key,
+        searchKey: searchKey,
     };
 };
 
+// Improved onError to always return valid JSON in the body
 const onError = (err, callback) => {
+    let errorMessage;
+    if (err instanceof Error) {
+        errorMessage = err.message;
+    } else if (typeof err === 'object' && err !== null) {
+        // Attempt to stringify object, fallback to generic message if it fails
+        try {
+            errorMessage = JSON.stringify(err);
+        } catch (stringifyError) {
+            errorMessage = "An unknown error occurred (object stringify failed).";
+            console.error("Error stringifying error object:", stringifyError);
+        }
+    } else {
+        errorMessage = String(err); // Convert anything to a string
+    }
+
     const responseFail = {
         statusCode: 500,
         headers: { "Access-Control-Allow-Origin": "*" },
-        body: err.message || JSON.stringify(err), // Ensure error message is a string
+        // Always wrap the error message in a JSON object to ensure valid JSON body
+        body: JSON.stringify({ error: errorMessage }), 
         isBase64Encoded: false,
     };
-    callback(null, responseFail);
-    return responseFail; // Return the error response for async functions
+    callback(null, responseFail); // Still using callback as per original design for final response
+    return responseFail; // Return the response for consistency in async flow
 };
 
 const setResponseFinal = (responseBody) => {
