@@ -1,56 +1,52 @@
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const { Upload } = require("@aws-sdk/lib-storage"); // For managed uploads, good for larger files
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, UpdateCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb"); // Import commands for SDK v3
 
-// Initialize S3 Client for SDK v3
-const s3Client = new S3Client({ region: process.env.AWS_REGION || "eu-west-1" });
-const BUCKET_NAME = process.env.BUCKET_NAME; // Ensure BUCKET_NAME is set in environment
+// Initialize DynamoDB Document Client for SDK v3
+const ddbClient = new DynamoDBClient({ region: process.env.AWS_REGION || "eu-west-1" }); // Use AWS_REGION environment variable
+const ddb = DynamoDBDocumentClient.from(ddbClient);
 
 module.exports = {
-  uploadFormPDF: async function (data) { // Changed to async function
+  updateRecordForApe: async function (params) { // Changed to async function, removed callback
     try {
-      const buf = Buffer.from(data.fileData, "base64");
-
-      console.log("Doc Name is " + data.fileName + " with content type " + data.fileType);
-      const filePath = getKeyName(data.appId, data.docName, data.fileName);
-      console.log("File Path :", filePath);
-
-      const objData = {
-        Bucket: BUCKET_NAME,
-        Key: filePath,
-        Body: buf,
-        ContentEncoding: "base64", // This header is about the encoding of the Body, not the file itself
-        ContentType: data.fileType,
-      };
-
-      console.log("calling s3 upload Function");
-
-      // Using @aws-sdk/lib-storage's Upload for better performance and progress handling
-      const uploader = new Upload({
-        client: s3Client,
-        params: objData,
-        tags: [], // optional tags
-        queueSize: 4, // optional concurrency configuration
-        partSize: 1024 * 1024 * 5, // optional part size for multipart uploads, 5MB min
-        leavePartsOnError: false, // optional manually handle dropped parts
-      });
-
-      uploader.on("httpUploadProgress", (progress) => {
-        console.log(`Progress: ${progress.loaded}/${progress.total}`);
-      });
-
-      await uploader.done(); // This waits for the upload to complete
-      console.log("Upload complete for S3 object:", filePath);
-
+      // Use SDK v3 UpdateCommand
+      const data = await ddb.send(new UpdateCommand(params));
+      console.log("DATA in update:", data);
+      console.log("UpdateItem succeeded:", stringify(data));
+      return { statusCode: 200, body: stringify(data) };
     } catch (err) {
-      console.error("Error Occurred while converting and saving Full Application form PDF in s3:", err);
-      throw err; // Re-throw the error for upstream handling
+      console.error("Error updating record:", err);
+      // Construct a more descriptive error message
+      const errorMessage = `Could not create message: ${err.message || JSON.stringify(err)}`;
+      throw {
+        statusCode: 400,
+        error: errorMessage,
+      };
+    }
+  },
+  queryRecordForApe: async function (params) { // Changed to async function, removed callback
+    try {
+      // Use SDK v3 QueryCommand
+      const data = await ddb.send(new QueryCommand(params));
+      console.log("DATA in query:", data);
+      console.log("QueryItem succeeded:", stringify(data, null, 2));
+      return { statusCode: 200, body: stringify(data, null, 2) };
+    } catch (err) {
+      console.error("Error querying record:", err);
+      // Construct a more descriptive error message
+      const errorMessage = `Could not create message: ${err.message || JSON.stringify(err)}`;
+      throw {
+        statusCode: 400,
+        error: errorMessage,
+      };
     }
   },
 };
 
-function getKeyName(folder, docName, filename) {
-  console.log("Doc name test :", docName);
-  // Ensure folder and docName are treated as parts of the path
-  const folderPath = `${folder}/${docName}`;
-  return `${folderPath}/${filename}`;
+function stringify(value) {
+  if (value === undefined) {
+    return JSON.stringify(value);
+  }
+  return JSON.stringify(value, (k, v) =>
+    typeof v === "bigint" ? v.toString() : v
+  );
 }
