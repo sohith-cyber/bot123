@@ -1,111 +1,56 @@
-const { S3Client, ListObjectsCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner"); // Might be useful for direct image links
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { Upload } = require("@aws-sdk/lib-storage"); // For managed uploads, good for larger files
 
 // Initialize S3 Client for SDK v3
 const s3Client = new S3Client({ region: process.env.AWS_REGION || "eu-west-1" });
-const BUCKET_NAME = "rocketmnlacustomerdocumentsbucket"; // Define bucket name
+const BUCKET_NAME = process.env.BUCKET_NAME; // Ensure BUCKET_NAME is set in environment
 
 module.exports = {
-  getDocumentRecords: async function (appId) { // Changed to async function
-    const files = [];
-    const additionalFiles = [];
-    let imgCust = null; // Use null for no image, not empty string
-    const jumioDocs = [];
-
-    const vparams = {
-      Bucket: BUCKET_NAME,
-      Prefix: `${appId}/` // Assuming documents are organized by appId as a prefix
-    };
-
+  uploadFormPDF: async function (data) { // Changed to async function
     try {
-      const data = await s3Client.send(new ListObjectsCommand(vparams)); // Use SDK v3 ListObjectsCommand
-      const promises = [];
+      const buf = Buffer.from(data.fileData, "base64");
 
-      if (data.Contents) {
-        for (const doc of data.Contents) {
-          if (doc.Key) { // Ensure doc.Key exists
-            promises.push(processFileObject(doc.Key));
-          }
-        }
-      }
+      console.log("Doc Name is " + data.fileName + " with content type " + data.fileType);
+      const filePath = getKeyName(data.appId, data.docName, data.fileName);
+      console.log("File Path :", filePath);
 
-      const processedObjects = await Promise.all(promises);
-
-      for (const obj of processedObjects) {
-        if (!obj || !obj.docType) continue; // Skip if object is null or missing docType
-
-        // Filter based on docType derived from the key
-        switch (obj.docType) {
-          case "PrimaryDocument":
-            files.push(obj);
-            break;
-          case "AdditionalDocument":
-            additionalFiles.push(obj);
-            break;
-          case "SuppCustomerSignature":
-            imgCust = obj;
-            break;
-          case "JumioDocument":
-            if (obj.imagePreviewUrl && obj.imagePreviewUrl.includes("jpeg")) {
-              jumioDocs.push(obj);
-            }
-            break;
-        }
-      }
-
-      console.log("fileObject jumioDocs length in s3 bucket: ", jumioDocs.length);
-      // Return an object that matches the expected structure in index.js for pdfRequestData
-      return {
-        files: files,
-        additionalFiles: additionalFiles,
-        imgCust: imgCust,
-        jumioDocs: jumioDocs,
+      const objData = {
+        Bucket: BUCKET_NAME,
+        Key: filePath,
+        Body: buf,
+        ContentEncoding: "base64", // This header is about the encoding of the Body, not the file itself
+        ContentType: data.fileType,
       };
 
+      console.log("calling s3 upload Function");
+
+      // Using @aws-sdk/lib-storage's Upload for better performance and progress handling
+      const uploader = new Upload({
+        client: s3Client,
+        params: objData,
+        tags: [], // optional tags
+        queueSize: 4, // optional concurrency configuration
+        partSize: 1024 * 1024 * 5, // optional part size for multipart uploads, 5MB min
+        leavePartsOnError: false, // optional manually handle dropped parts
+      });
+
+      uploader.on("httpUploadProgress", (progress) => {
+        console.log(`Progress: ${progress.loaded}/${progress.total}`);
+      });
+
+      await uploader.done(); // This waits for the upload to complete
+      console.log("Upload complete for S3 object:", filePath);
+
     } catch (err) {
-      console.error("Error listing S3 objects:", err);
+      console.error("Error Occurred while converting and saving Full Application form PDF in s3:", err);
       throw err; // Re-throw the error for upstream handling
     }
   },
 };
 
-const processFileObject = async (key) => {
-  const getObjparams = {
-    Bucket: BUCKET_NAME,
-    Key: key,
-  };
-  let obj = {};
-
-  try {
-    const data = await s3Client.send(new GetObjectCommand(getObjparams)); // Use SDK v3 GetObjectCommand
-    console.log("key is " + key);
-
-    const keyArr = key.split("/");
-    const docType = keyArr[1]; // Assuming docType is the second part of the key
-    let fileName = keyArr[2]; // Default filename
-    if (keyArr.length === 4) {
-      fileName = keyArr[3]; // If a fourth part exists, use it as filename
-    }
-
-    // Read the stream and convert to base64
-    const imagePreviewUrl = await new Promise((resolve, reject) => {
-      const chunks = [];
-      data.Body.on('data', (chunk) => chunks.push(chunk));
-      data.Body.once('end', () => resolve(`data:${data.ContentType};base64,${Buffer.concat(chunks).toString('base64')}`));
-      data.Body.once('error', reject);
-    });
-
-    obj = {
-      docType: docType, // Added docType to the object for easier filtering
-      fileName: fileName,
-      docName: docType, // Using docType as docName for now, adjust if actual docName is different
-      imagePreviewUrl: imagePreviewUrl,
-      file: {}, // Placeholder, adjust if actual file content is needed differently
-    };
-
-    return obj;
-  } catch (err) {
-    console.error(`Error getting S3 object ${key}:`, err);
-    return null; // Return null or throw a more specific error
-  }
-};
+function getKeyName(folder, docName, filename) {
+  console.log("Doc name test :", docName);
+  // Ensure folder and docName are treated as parts of the path
+  const folderPath = `${folder}/${docName}`;
+  return `${folderPath}/${filename}`;
+}
