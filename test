@@ -1,105 +1,156 @@
-var files = [];
-var additionalFiles = [];
-var imgCust = "";
-var jumioDocs = [];
+// Staff Channel
 
-var promises = [];
-var vparams = {
-    Bucket: "rocketmnlacustomerdocumentsbucket",
+module.exports = {
+  docUploadRecords: function (docUploadRequest) {
+    console.log("docUploadRequest", docUploadRequest);
+
+    let req = docUploadRequest.appDetails;
+    let uploadReq = JSON.parse(req);
+    console.log("uploadReg: ", uploadReq);
+
+    let custName = uploadReq.personalDetails.customerName;
+    let apeId;
+
+    if (typeof docUploadRequest.apeId !== "string") {
+      apeId = JSON.stringify(docUploadRequest.apeId);
+    } else {
+      apeId = docUploadRequest.apeId;
+    }
+    console.log("apeId: ", apeId);
+
+    const docType = uploadReq.personalDetails.idDetails.idType;
+    const customerName = custName.firstName + " " + custName.lastName;
+    const idNumber = uploadReq.personalDetails.idDetails.idNumber;
+    const formattedDt = getFormattedDate(uploadReq.personalDetails.dateofbirth);
+
+    console.log("fileObj", docUploadRequest.fileObj);
+
+    let fileObj = docUploadRequest.fileObj;
+    let documentFileName = fileObj.docName;
+    const documentContent = fileObj.imagePreviewUrl;
+    const documentContentLength = documentContent.length;
+
+    console.log("documentFileName:", documentFileName);
+    console.log("documentContent", documentContent);
+    console.log("documentContentLength: ", documentContentLength);
+
+    let todayDate = new Date().toISOString();
+    console.log("todayDate: ", todayDate);
+
+    let dateTime =
+      todayDate.substring(0, 4) +
+      todayDate.substring(5, 7) +
+      todayDate.substring(8, 10) +
+      todayDate.substring(11, 13) +
+      todayDate.substring(14, 16) +
+      todayDate.substring(17, 19) +
+      todayDate.substring(20, 23);
+
+    console.log("dateTime:", dateTime);
+    console.log("uploadReq.staffId", uploadReq.staffId);
+    console.log("uploadReq channelId:", uploadReq.channelId);
+
+    if (uploadReq.staffId && uploadReq.channelId) {
+      console.log("check if is called ");
+      if (uploadReq.channelId === "MSF") {
+        console.log("check if channel is MSF ");
+        if (uploadReq.tuInfo.applicationId) {
+          documentFileName =
+            "Sales_" +
+            uploadReq.tuInfo.applicationId +
+            uploadReq.appId +
+            uploadReq.personalDetails.idDetails.idNumber +
+            dateTime;
+        } else {
+          documentFileName =
+            "Sales_" +
+            uploadReq.appId +
+            uploadReq.personalDetails.idDetails.idNumber +
+            dateTime;
+        }
+      } else {
+        if (uploadReq.tuInfo.applicationId) {
+          documentFileName =
+            "Branch_" +
+            uploadReq.tuInfo.applicationId +
+            uploadReq.appId +
+            uploadReq.personalDetails.idDetails.idNumber +
+            dateTime;
+        } else {
+          documentFileName =
+            "Branch" +
+            uploadReq.appId +
+            uploadReq.personalDetails.idDetails.idNumber +
+            dateTime;
+        }
+      }
+    } else {
+      if (uploadReq.tuInfo.applicationId) {
+        documentFileName =
+          "Online" +
+          uploadReq.tuInfo.applicationId +
+          uploadReq.appId +
+          uploadReq.personalDetails.idDetails.idNumber +
+          dateTime;
+      } else {
+        documentFileName =
+          "Online" +
+          uploadReq.appId +
+          uploadReq.personalDetails.idDetails.idNumber +
+          dateTime;
+      }
+    }
+
+    console.log("pdfName: ", documentFileName);
+
+    var fileNetRequest = JSON.stringify({
+      consumerName: "PHRK",
+      businessCountry: "PH",
+      objectStoreName: "MNL",
+      docProperty: [
+        {
+          propertyName: "DocumentType",
+          dataType: "String",
+          stringValue: "OTHE",
+        },
+        {
+          propertyName: "IDValue",
+          dataType: "String",
+          stringValue: apeId,
+        },
+        {
+          propertyName: "OtherReference",
+          dataType: "String",
+          stringValue: customerName,
+        },
+        {
+          propertyName: "OtherReference2",
+          dataType: "String",
+          stringValue: formattedDt,
+        },
+        {
+          propertyName: "OtherReference3",
+          dataType: "String",
+          stringValue: idNumber,
+        },
+      ],
+      docContent: {
+        documentMIMEType: "application/pdf",
+        documentFileName: documentFileName,
+        inlineDocument: {
+          documentContentLength: documentContentLength,
+          documentContent: documentContent,
+        },
+      },
+    });
+
+    return fileNetRequest;
+  },
 };
 
-let data = await s3.listObjects(vparams).promise();
-data.Contents.forEach((doc) => {
-    promises.push(
-        processFileObjects(doc.Key).then((obj) => {
-            //need to be removed pdf support added to create pdf
-            if (!doc.Key.includes(".pdf")) {
-                if (doc.Key.split("/")[1] === "PrimaryDocument") {
-                    files.push(obj);
-                }
-                if (doc.Key.split("/")[1] === "AdditionalDocument") {
-                    additionalFiles.push(obj);
-                }
-                if (doc.Key.split("/")[1] === "SuppCustomerSignature") {
-                    imgCust = obj;
-                }
-                if (doc.Key.split("/")[1] === "JumioDocument") {
-                    if (obj.imagePreviewUrl.includes("jpeg")) {
-                        jumioDocs.push(obj);
-                    }
-                }
-            }
-        })
-    );
-});
-
-return await Promise.all(promises).then(() => {
-    console.log("fileObject jumioDocs length in s3 bucket: ", files.length);
-    return files;
-});
-
-const processFileObjects = async (key) => {
-    let getObjparams = {
-        Bucket: "rocketmnlacustomerdocumentsbucket",
-        Key: key,
-    };
-    let obj = {};
-    let data = await s3.getObject(getObjparams).promise();
-    console.log("key is" + key);
-    let keyArr = key.split("/");
-    let docType = keyArr[1];
-    let fileName = keyArr[2];
-    let imagePreviewUrl =
-        "data:" +
-        data.ContentType +
-        ";" +
-        "base64," +
-        data.Body.toString("base64");
-    if (keyArr.length === 4) {
-        fileName = keyArr[3];
-    }
-    console.log(data);
-    switch (docType) {
-        case "AdditionalDocument": {
-            obj = {
-                fileName: fileName,
-                docName: docName,
-                file: {},
-            };
-            break;
-        }
-        case "PrimaryDocument": {
-            obj = {
-                imagePreviewUrl: imagePreviewUrl,
-                fileName: fileName,
-                docName: docName,
-                file: {},
-            };
-            break;
-        }
-        case "CustomerSignature": {
-            obj = {
-                imagePreviewUrl: imagePreviewUrl,
-                break;
-            };
-            break;
-        }
-        case "SuppCustomerSignature": {
-            obj = {
-                imagePreviewUrl: imagePreviewUrl,
-                break;
-            };
-            break;
-        }
-        case "JumioDocuments": {
-            obj = {
-                imagePreviewUrl: imagePreviewUrl,
-                fileName: fileName,
-                docName: docName,
-                file: {},
-            };
-            break;
-        }
-    }
-    return obj;
+const getFormattedDate = (value) => {
+  let year = value.substring(0, 4);
+  let day = value.substring(8, 10);
+  let month = value.substring(5, 7);
+  return day + month + year;
 };
