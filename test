@@ -1,356 +1,105 @@
-const https = require("https");
-var AWS = require("aws-sdk");
+var files = [];
+var additionalFiles = [];
+var imgCust = "";
+var jumioDocs = [];
 
-const ddb = new AWS.DynamoDB.DocumentClient();
-const customHttpsRequest = require("./httpsRequest");
-const databaseClient = require("./databaseServices");
-
-AWS.config.region = "eu-west-1";
-
-const s3Service = require("./retrieveDocuments");
-
-const savePdfS3Service = require("./uploadPdfDoc");
-const docUplod = require("./docUpload");
-
-/**
-
-* Pass the data to send as 'event.data, and the request options as
-
-* event.options.
-
-* For more information see the HTTPS module documentation
-
-* at https://nodejs.org/api/https.html.
-
-* Will succeed with the response body.
-
-*
-*/
-
-exports.handler = async (event, context, callback) => {
-
-console.log("event", JSON.stringify(event));
-
-let request = event.body;
-
-console.log("request " + request);
-
-console.log("request object is"+ JSON.stringify(event.body));
-
-let appId = event.body.appId;
-
-console.log("APP ID before", appId);
-
-let host = process.env.CREATE_AND_UPLOAD_API_HOST;
-
-console.log(host);
-
-let methodType = "POST";
-
-await scanAppTable (appId)
-
-.then (async (userdata) => {
-
-console.log("APP ID", appId);
-
-console.log("userdata", userdata);
-
-if (userdata.Items.length >= 1) {
- console.log("inside if userdata");
-
-let apeId = userdata.Items[0].APE_ID;
-
-let additionalData = userdata.Items[0].ADDITIONAL_DATA;
-
-let fileobj = await s3Service.getDocumentRecords (appId);
- let pdfRequestData = { ...JSON.parse(additionalData), ...fileObj};
-
-console.log("Your request for PDF", pdfRequestData);
-
-let createPDFApi = process.env.CREATE_AND_UPLOAD_CRAETEPDF_API_PATH;
-
-let pdfHeaders = {
-
-"Content-Type": "application/json",
-
-"x-hsbc-client-id": process.env.CLIENT_ID,
-
-"x-hsbc-client-secret": process.env.CLIENT_SECRET,
-
+var promises = [];
+var vparams = {
+    Bucket: "rocketmnlacustomerdocumentsbucket",
 };
 
-console.log("creating pdf request");
-
-console.log(JSON.stringify (pdfRequestData));
-
-console.log({
-
-host,
-
-createPDFApi,
-
-pdfHeaders,
-
-methodType,
-
-req: JSON.stringify(pdfRequestData),
-
+let data = await s3.listObjects(vparams).promise();
+data.Contents.forEach((doc) => {
+    promises.push(
+        processFileObjects(doc.Key).then((obj) => {
+            //need to be removed pdf support added to create pdf
+            if (!doc.Key.includes(".pdf")) {
+                if (doc.Key.split("/")[1] === "PrimaryDocument") {
+                    files.push(obj);
+                }
+                if (doc.Key.split("/")[1] === "AdditionalDocument") {
+                    additionalFiles.push(obj);
+                }
+                if (doc.Key.split("/")[1] === "SuppCustomerSignature") {
+                    imgCust = obj;
+                }
+                if (doc.Key.split("/")[1] === "JumioDocument") {
+                    if (obj.imagePreviewUrl.includes("jpeg")) {
+                        jumioDocs.push(obj);
+                    }
+                }
+            }
+        })
+    );
 });
 
-await customHttpsRequest
-
-.createHttpsRequestPromise(
-
-host,
-
-createPDFApi,
-
-pdfHeaders,
-
-methodType,
-
-JSON.stringify (pdfRequestData),
-
-)
-
-.then (async (pdfApiResponse) => {
-
-if (pdfApiResponse.data !== undefined && pdfApiResponse.data) {
- console.log("started saving Credit Card Application Form") ;
- let obj = {
-
-appId: pdfApiResponse.appid,
-
-docName: "CreditCardApplicationForm",
-
-fileData: pdfApiResponse.data,
-
-fileName: pdfApiResponse.fileName,
-
-fileType: pdfApiResponse.fileType,
-
-};
-
-console.log("Request Obj", obj);
-
-savePdfS3Service.uploadFormPDF(obj);
-
-console.log("Save complete for Credit Card Application Form ");
-
-let fullAppPdf = {
-
-docType: pdfApiResponse.fileType,
-
-fileName: pdfApiResponse.fileName,
- docName: "CreditCardApplicationForm",
-
-imagePreviewUrl: pdfApiResponse.data,
-
-};
-
-let fileNetRequest = {
-
-appDetails: additionalData,
-
-apeId: apeId,
-
-fileObj: fullAppPdf,
-
-};
-
-let docUploadRequest = docUplod.docUploadRecords (fileNetRequest);
- console.log("fileNetRequest length:", docUploadRequest.length);
-let filenetApi = process.env.CREATE_AND_UPLOAD_UPLOAD_API_PATH;
-let filenetHeaders = {
-
-"Content-Type": "application/json",
-
-"x-hsbc-client-id": process.env.CLIENT_ID,
-
-"x-hsbc-client-secret": process.env.CLIENT_SECRET,
-
-};
-
-await customHttpsRequest
-
-.createHttpsRequestPromise(
-
-host,
-
-filenetApi,
-
-filenetHeaders,
-
-methodType,
-
-docUploadRequest,
-
-)
-
-.then((data) => {
-
-console.log("upload success");
-
-callback(null, {
-
-statusCode: 200,
-
-body: JSON.stringify({
-
-status: "ok",
-
-}),
-
-headers: responseHeaders,
-
+return await Promise.all(promises).then(() => {
+    console.log("fileObject jumioDocs length in s3 bucket: ", files.length);
+    return files;
 });
 
-var BACKENDAPI_STATUS = "Successful";
-
-var paramBackendStatus = {
-
-TableName: "APP_DETAILS",
-
-Key: { APP_ID: appId },
-
-UpdateExpression:
-
-"SET BACKENDAPI_STATUS = :backendAPIStatus",
-
-ExpressionAttributeValues: {
-
-":backendAPIStatus": BACKENDAPI_STATUS,
-
-},
-
-ReturnValues: "ALL_NEW",
-
-};
-
-console.log("Updating record for " + appId);
-
-databaseClient
-
-.updateRecordForApe(paramBackendStatus)
-
-.then(async (dbUpdateResponse) => {
-
-console.log("dbUpdateResponse: ", dbUpdateResponse);
-
-});
-
-})
-
-.catch((e) => {
-
-console.log("catch0 error: e ", e);
-
-errorResponse(
-
-JSON.stringify(e),
-
-context.awsRequestId,
-
-callback,
-
-);
-
-})
-
-} else {
-
-errorResponse(
-
-"Error in Reading Pdf Api Response",
-
-context.awsRequestId,
-
-callback,
-
-);
-
-}
-
-})
-
-.catch((e) => {
-
-console.log("catch1 error: e ", e);
-
-errorResponse(JSON.stringify(e), context.awsRequestId, callback);
-
-});
-
-} else {
-
-console.log("catch2 error: e ");
-
-errorResponse(JSON.stringify(e), context.awsRequestId, callback);
-
-}
-
-});
-
-};
-
-function errorResponse(errorMessage, awsRequestId, callback) {
-
-callback(null, {
-
-statusCode: 500,
-
-body: JSON.stringify({
-
-Error: errorMessage,
-
-Reference: awsRequestId,
-
-}),
-
-headers: responseHeaders,
-
-});
-
-}
-
-function scanAppTable (appId) {
-
-console.log("scanAppTable ", appId);
-
-var params = {
-
-TableName: "APP_DETAILS",
-
-KeyConditionExpression: "#appId = :appId",
-
-ExpressionAttributeNames: {
-
-"#appId": "APP_ID",
-
-},
-
-ExpressionAttributeValues: {
-
-":appId": appId,
-
-},
-
-};
-
-return ddb.query(params).promise();
-
-}
-
-const responseHeaders = {
-
-"Access-Control-Allow-Origin": process.env.CORS_ORIGIN,
-
-"Strict-Transport-Security": "max-age=16070400; includeSubDomains",
-
-"X-Content-Type-Options": "nosniff",
-
-"X-XSS-Protection": "1; mode=block",
-
-"Content-Security-Policy": "default-src 'self'",
-
+const processFileObjects = async (key) => {
+    let getObjparams = {
+        Bucket: "rocketmnlacustomerdocumentsbucket",
+        Key: key,
+    };
+    let obj = {};
+    let data = await s3.getObject(getObjparams).promise();
+    console.log("key is" + key);
+    let keyArr = key.split("/");
+    let docType = keyArr[1];
+    let fileName = keyArr[2];
+    let imagePreviewUrl =
+        "data:" +
+        data.ContentType +
+        ";" +
+        "base64," +
+        data.Body.toString("base64");
+    if (keyArr.length === 4) {
+        fileName = keyArr[3];
+    }
+    console.log(data);
+    switch (docType) {
+        case "AdditionalDocument": {
+            obj = {
+                fileName: fileName,
+                docName: docName,
+                file: {},
+            };
+            break;
+        }
+        case "PrimaryDocument": {
+            obj = {
+                imagePreviewUrl: imagePreviewUrl,
+                fileName: fileName,
+                docName: docName,
+                file: {},
+            };
+            break;
+        }
+        case "CustomerSignature": {
+            obj = {
+                imagePreviewUrl: imagePreviewUrl,
+                break;
+            };
+            break;
+        }
+        case "SuppCustomerSignature": {
+            obj = {
+                imagePreviewUrl: imagePreviewUrl,
+                break;
+            };
+            break;
+        }
+        case "JumioDocuments": {
+            obj = {
+                imagePreviewUrl: imagePreviewUrl,
+                fileName: fileName,
+                docName: docName,
+                file: {},
+            };
+            break;
+        }
+    }
+    return obj;
 };
