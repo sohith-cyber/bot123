@@ -1,248 +1,102 @@
-//Staff Channel
+const https = require("https");
 
-JavaScript file
+const AWS = require("aws-sdk");
 
 module.exports = {
 
-docUploadRecords: function (docUploadRequest) {
+createHttpsRequestPromise: async function (
 
-console.log("docUploadRequest", docUploadRequest);
+host,
 
-let req = docUploadRequest.appDetails;
+path,
 
-let uploadReq =JSON.parse(req);
+headers,
 
-console.log("uploadReg: ", uploadReq);
+method,
 
-let custName = uploadReq.personalDetails.customerName;
- let apeId;
+requestData,
 
-if (typeof docUploadRequest.apeId !== "string") {
- apeId =JSON.stringify(docUploadRequest.apeId);
+callback,
 
-} else {
+){
 
-apeId = docUploadRequest.apeId;
+return new Promise((resolve, reject) => {
 
-console.log("apeId: ", apeId);
+const options = {
 
-const docType = uploadReq.personalDetails.idDetails.idType;
- const customerName = custName.firstName + " " + custName.lastName;
+host: host,
 
-const idNumber = uploadReq.personalDetails.idDetails.idNumber;
- const formattedDt = getFormattedDate (uploadReq.personalDetails.dateofbirth);
+path: path,
 
-console.log("fileObj", docUploadRequest.fileObj);
+rejectUnauthorized: false,
 
-let fileObj = docUploadRequest.fileObj;
+method: method,
 
-let documentFileName = fileObj.docName;
+headers: headers,
 
-const documentContent = fileObj.imagePreviewUrl;
+port: 443,
 
-const documentContentLength = documentContent.length;
-console.log("documentFileName:", documentFileName);
+timeout: 300000,
 
-console.log("documentContent", documentContent);
+};
 
-console.log("documentContentLength: ", documentContentLength);
+const req = https.request (options, (res) => {
 
-let todayDate = new Date().toISOString();
+if (res.statusCode < 200 || res.statusCode >= 300) {
 
-console.log("todayDate: ", todayDate);
+console.log("http response==> ", res);
 
-let dateTime =
-
-todayDate.substring(0, 4) +
-
-todayDate.substring(5, 7) +
-
-todayDate.substring(8, 10) +
-
-todayDate.substring(11, 13) +
-
-todayDate.substring(14, 16) +
-
-todayDate.substring(17, 19) +
-
-todayDate.substring(20, 23);
-
-console.log("dateTime:", dateTime);
-
-console.log("uploadReq.staffId", uploadReq.staffId);
-
-console.log("uploadReq channelId:", uploadReq.channelId);
-
-if (uploadReq.staffId && uploadReq.channelId) {
-
-console.log("check if is called ");
-
-if (uploadReq.channelId === "MSF") {
-
-console.log("check if channel is MSF ");
-
-if (uploadReq.tuInfo.applicationId) {
-
-documentFileName =
-
-"Sales" +
-
-uploadReq.tuInfo.applicationId +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
-
-} else {
-
-documentFileName =
-
-"Sales" +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
-} else {
-
-if (uploadReq.tuInfo.applicationId) {
-
-documentFileName =
-
-"Branch_" +
-
-uploadReq.tuInfo.applicationId +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
-
-} else {
-
-documentFileName =
-
-"Branch" +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
+return reject (new Error("statusCode=" + res.statusCode));
 
 }
 
-}
+var body =[];
 
-} else {
+res.on("data", function (chunk) {
 
-if (uploadReq.tuInfo.applicationId) {
-
-documentFileName =
-
-"Online" +
-
-uploadReq.tuInfo.applicationId +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
-
-} else {
-
-documentFileName =
-
-"Online" +
-
-uploadReq.appId +
-
-uploadReq.personalDetails.idDetails.idNumber +
-
-dateTime;
-}
-
-}
-
-console.log("pdfName: ", documentFileName);
-
-var fileNetRequest =JSON.parse({
-
-consumerName: "PHRK",
-
-businessCountry: "PH",
-
-objectStoreName: "MNL",
-
-docProperty: [
-
-{
-
-propertyName: "DocumentType",
-
-dataType: "String",
-
-stringValue: "OTHE",
-
-},
-
-{
-
-propertyName: "IDValue",
- dataType: "String",
-
-stringValue: apeId,
-
-},
-{
- propertyName: "OtherReference",
- dataType: "String",
- stringValue: customerName,
-},
-{
- propertyName: "OtherReference2",
- dataType: "String",
- stringValue: formattedDt,
-},
-{
- propertyName: "OtherReference3",
- dataType: "String",
- stringValue: idNumber,
-},
-
-],
-
-docContent: {
-
-documentMIMEType: "application/pdf",
-
-documentFileName: documentFileName,
-
-inlineDocument: {
-
-documentContentLength: documentContentLength,
-
-documentContent: documentContent,
-
-},
-
-},
+body.push(chunk);
 
 });
 
-return fileNetRequest;
+res.on("end", function () {
+
+try {
+
+console.log("api response code is");
+
+console.log(res.statusCode);
+
+console.log("printing response body for test");
+
+console.log (body);
+
+body = JSON.parse(Buffer.concat(body).toString());
+
+} catch (e) {
+
+reject (e);
+
+}
+
+resolve (body);
+
+});
+
+});
+
+req.on("error", (e) => {
+
+reject (e.message);
+
+});
+
+if (requestData) req.write(requestData) ;
+ // send the request
+
+req.end();
+
+});
 
 },
-
-const getFormattedDate = (value) => {
- let year = value.substring(0, 4);
- let day = value.substring(8, 10);
-let month = value.substring(5, 7) ;
- return day + month + year;
 
 };
