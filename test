@@ -1,224 +1,111 @@
-const https = require("https"); // Still used for basic HTTPS requests if not replaced by a library
-const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, QueryCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb"); // For simplified DynamoDB operations
+const { S3Client, ListObjectsCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner"); // Might be useful for direct image links
 
-const customHttpsRequest = require("./httpsRequest");
-const databaseClient = require("./databaseServices"); // This module needs to be updated for SDK v3 as well
-const s3Service = require("./retrieveDocuments"); // This module needs to be updated for SDK v3
-const savePdfS3Service = require("./uploadPdfDoc"); // This module needs to be updated for SDK v3
-const docUplod = require("./docUpload");
+// Initialize S3 Client for SDK v3
+const s3Client = new S3Client({ region: process.env.AWS_REGION || "eu-west-1" });
+const BUCKET_NAME = "rocketmnlacustomerdocumentsbucket"; // Define bucket name
 
-// Initialize DynamoDB Document Client for SDK v3
-const ddbClient = new DynamoDBClient({ region: process.env.AWS_REGION || "eu-west-1" }); // Use AWS_REGION environment variable
-const ddb = DynamoDBDocumentClient.from(ddbClient);
+module.exports = {
+  getDocumentRecords: async function (appId) { // Changed to async function
+    const files = [];
+    const additionalFiles = [];
+    let imgCust = null; // Use null for no image, not empty string
+    const jumioDocs = [];
 
-/**
- * Pass the data to send as 'event.data, and the request options as
- * event.options.
- * For more information see the HTTPS module documentation
- * at https://nodejs.org/api/https.html.
- * Will succeed with the response body.
- */
+    const vparams = {
+      Bucket: BUCKET_NAME,
+      Prefix: `${appId}/` // Assuming documents are organized by appId as a prefix
+    };
 
-exports.handler = async (event, context, callback) => {
-  console.log("event", JSON.stringify(event));
+    try {
+      const data = await s3Client.send(new ListObjectsCommand(vparams)); // Use SDK v3 ListObjectsCommand
+      const promises = [];
 
-  // Ensure event.body is parsed if it's a string
-  let requestBody;
-  try {
-    requestBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-  } catch (parseError) {
-    console.error("Error parsing event.body:", parseError);
-    return errorResponse("Invalid request body format", context.awsRequestId, callback);
-  }
-
-  console.log("request", requestBody);
-  console.log("request object is", JSON.stringify(requestBody));
-
-  let appId = requestBody.appId;
-  console.log("APP ID before", appId);
-
-  let host = process.env.CREATE_AND_UPLOAD_API_HOST;
-  console.log(host);
-
-  let methodType = "POST";
-
-  try {
-    const userdata = await scanAppTable(appId);
-    console.log("APP ID", appId);
-    console.log("userdata", userdata);
-
-    if (userdata.Items && userdata.Items.length >= 1) {
-      console.log("inside if userdata");
-
-      let additionalData = userdata.Items[0].ADDITIONAL_DATA;
-      let apeId = userdata.Items[0].APE_ID;
-
-      // Ensure additionalData is a parsed object
-      let parsedAdditionalData;
-      try {
-        parsedAdditionalData = typeof additionalData === 'string' ? JSON.parse(additionalData) : additionalData;
-      } catch (e) {
-        console.error("Error parsing additionalData:", e);
-        return errorResponse("Error parsing additional data", context.awsRequestId, callback);
+      if (data.Contents) {
+        for (const doc of data.Contents) {
+          if (doc.Key) { // Ensure doc.Key exists
+            promises.push(processFileObject(doc.Key));
+          }
+        }
       }
 
-      let fileObj = await s3Service.getDocumentRecords(appId); // This call needs to be updated for SDK v3
-      let pdfRequestData = { ...parsedAdditionalData, ...fileObj };
-      let createPDFApi = process.env.CREATE_AND_UPLOAD_CRAETEPDF_API_PATH;
+      const processedObjects = await Promise.all(promises);
 
-      console.log("Your request for PDF", pdfRequestData);
+      for (const obj of processedObjects) {
+        if (!obj || !obj.docType) continue; // Skip if object is null or missing docType
 
-      let pdfHeaders = {
-        "Content-Type": "application/json",
-        "x-hsbc-client-id": process.env.CLIENT_ID,
-        "x-hsbc-client-secret": process.env.CLIENT_SECRET,
+        // Filter based on docType derived from the key
+        switch (obj.docType) {
+          case "PrimaryDocument":
+            files.push(obj);
+            break;
+          case "AdditionalDocument":
+            additionalFiles.push(obj);
+            break;
+          case "SuppCustomerSignature":
+            imgCust = obj;
+            break;
+          case "JumioDocument":
+            if (obj.imagePreviewUrl && obj.imagePreviewUrl.includes("jpeg")) {
+              jumioDocs.push(obj);
+            }
+            break;
+        }
+      }
+
+      console.log("fileObject jumioDocs length in s3 bucket: ", jumioDocs.length);
+      // Return an object that matches the expected structure in index.js for pdfRequestData
+      return {
+        files: files,
+        additionalFiles: additionalFiles,
+        imgCust: imgCust,
+        jumioDocs: jumioDocs,
       };
 
-      console.log("creating pdf request");
-      console.log(JSON.stringify(pdfRequestData));
-      console.log({
-        host,
-        createPDFApi,
-        pdfHeaders,
-        methodType,
-        req: JSON.stringify(pdfRequestData),
-      });
-
-      const pdfApiResponse = await customHttpsRequest.createHttpsRequestPromise(
-        host,
-        createPDFApi,
-        pdfHeaders,
-        methodType,
-        JSON.stringify(pdfRequestData)
-      );
-
-      if (pdfApiResponse.data !== undefined && pdfApiResponse.data) {
-        console.log("started saving Credit Card Application Form");
-        let obj = {
-          appId: pdfApiResponse.appid,
-          docName: "CreditCardApplicationForm",
-          fileData: pdfApiResponse.data,
-          fileName: pdfApiResponse.fileName,
-          fileType: pdfApiResponse.fileType,
-        };
-
-        console.log("Request Obj", obj);
-        await savePdfS3Service.uploadFormPDF(obj); // This call needs to be updated for SDK v3
-        console.log("Save complete for Credit Card Application Form ");
-
-        let fullAppPdf = {
-          docType: pdfApiResponse.fileType,
-          fileName: pdfApiResponse.fileName,
-          docName: "CreditCardApplicationForm",
-          imagePreviewUrl: pdfApiResponse.data,
-        };
-
-        let fileNetRequest = {
-          appDetails: additionalData, // Keep as string for docUploadRecords
-          apeId: apeId,
-          fileObj: fullAppPdf,
-        };
-
-        let docUploadRequest = docUplod.docUploadRecords(fileNetRequest);
-        console.log("fileNetRequest length:", docUploadRequest.length);
-
-        let filenetApi = process.env.CREATE_AND_UPLOAD_UPLOAD_API_PATH;
-        let filenetHeaders = {
-          "Content-Type": "application/json",
-          "x-hsbc-client-id": process.env.CLIENT_ID,
-          "x-hsbc-client-secret": process.env.CLIENT_SECRET,
-        };
-
-        await customHttpsRequest.createHttpsRequestPromise(
-          host,
-          filenetApi,
-          filenetHeaders,
-          methodType,
-          docUploadRequest
-        );
-
-        console.log("upload success");
-
-        callback(null, {
-          statusCode: 200,
-          body: JSON.stringify({
-            status: "ok",
-          }),
-          headers: responseHeaders,
-        });
-
-        let BACKENDAPI_STATUS = "Successful";
-        var paramBackendStatus = {
-          TableName: "APP_DETAILS",
-          Key: { APP_ID: appId },
-          UpdateExpression: "set BACKENDAPI_STATUS = :backendAPIStatus",
-          ExpressionAttributeValues: {
-            ":backendAPIStatus": BACKENDAPI_STATUS,
-          },
-          ReturnValues: "ALL_NEW",
-        };
-
-        console.log("Updating record for " + appId);
-        await databaseClient.updateRecordForApe(paramBackendStatus); // This call needs to be updated for SDK v3
-        console.log("dbUpdateResponse: Update complete"); // Logging simplified as updateRecordForApe now handles its own logging
-
-      } else {
-        errorResponse(
-          "Error in Reading Pdf Api Response: Data is undefined or null",
-          context.awsRequestId,
-          callback
-        );
-      }
-    } else {
-      errorResponse(
-        "No user data found for APP ID: " + appId,
-        context.awsRequestId,
-        callback
-      );
+    } catch (err) {
+      console.error("Error listing S3 objects:", err);
+      throw err; // Re-throw the error for upstream handling
     }
-  } catch (e) {
-    console.error("An error occurred in handler:", e);
-    errorResponse(
-      JSON.stringify(e.message || e),
-      context.awsRequestId,
-      callback
-    );
-  }
+  },
 };
 
-async function scanAppTable(appId) {
-  console.log("scanAppTable ", appId);
-  var params = {
-    TableName: "APP_DETAILS",
-    KeyConditionExpression: "#appId = :appId",
-    ExpressionAttributeNames: {
-      "#appId": "APP_ID",
-    },
-    ExpressionAttributeValues: {
-      ":appId": appId,
-    },
+const processFileObject = async (key) => {
+  const getObjparams = {
+    Bucket: BUCKET_NAME,
+    Key: key,
   };
-  // Use SDK v3 QueryCommand
-  const data = await ddb.send(new QueryCommand(params));
-  return data;
-}
+  let obj = {};
 
-function errorResponse(errorMessage, awsRequestId, callback) {
-  callback(null, {
-    statusCode: 500,
-    body: JSON.stringify({
-      Error: errorMessage,
-      Reference: awsRequestId,
-    }),
-    headers: responseHeaders,
-  });
-}
+  try {
+    const data = await s3Client.send(new GetObjectCommand(getObjparams)); // Use SDK v3 GetObjectCommand
+    console.log("key is " + key);
 
-const responseHeaders = {
-  "Access-Control-Allow-Origin": process.env.CORS_ORIGIN || "*", // Default to * if not set
-  "Strict-Transport-Security": "max-age=16070400; includeSubDomains",
-  "X-Content-Type-Options": "nosniff",
-  // "X-XSS-Protection": "1; mode=block", // Uncomment if needed
-  // "Content-Security-Policy": "default-src 'self'", // Uncomment and configure if needed
+    const keyArr = key.split("/");
+    const docType = keyArr[1]; // Assuming docType is the second part of the key
+    let fileName = keyArr[2]; // Default filename
+    if (keyArr.length === 4) {
+      fileName = keyArr[3]; // If a fourth part exists, use it as filename
+    }
+
+    // Read the stream and convert to base64
+    const imagePreviewUrl = await new Promise((resolve, reject) => {
+      const chunks = [];
+      data.Body.on('data', (chunk) => chunks.push(chunk));
+      data.Body.once('end', () => resolve(`data:${data.ContentType};base64,${Buffer.concat(chunks).toString('base64')}`));
+      data.Body.once('error', reject);
+    });
+
+    obj = {
+      docType: docType, // Added docType to the object for easier filtering
+      fileName: fileName,
+      docName: docType, // Using docType as docName for now, adjust if actual docName is different
+      imagePreviewUrl: imagePreviewUrl,
+      file: {}, // Placeholder, adjust if actual file content is needed differently
+    };
+
+    return obj;
+  } catch (err) {
+    console.error(`Error getting S3 object ${key}:`, err);
+    return null; // Return null or throw a more specific error
+  }
 };
