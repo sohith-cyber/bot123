@@ -1,102 +1,356 @@
 const https = require("https");
+var AWS = require("aws-sdk");
 
-const AWS = require("aws-sdk");
+const ddb = new AWS.DynamoDB.DocumentClient();
+const customHttpsRequest = require("./httpsRequest");
+const databaseClient = require("./databaseServices");
 
-module.exports = {
+AWS.config.region = "eu-west-1";
 
-createHttpsRequestPromise: async function (
+const s3Service = require("./retrieveDocuments");
 
-host,
+const savePdfS3Service = require("./uploadPdfDoc");
+const docUplod = require("./docUpload");
 
-path,
+/**
 
-headers,
+* Pass the data to send as 'event.data, and the request options as
 
-method,
+* event.options.
 
-requestData,
+* For more information see the HTTPS module documentation
 
-callback,
+* at https://nodejs.org/api/https.html.
 
-){
+* Will succeed with the response body.
 
-return new Promise((resolve, reject) => {
+*
+*/
 
-const options = {
+exports.handler = async (event, context, callback) => {
 
-host: host,
+console.log("event", JSON.stringify(event));
 
-path: path,
+let request = event.body;
 
-rejectUnauthorized: false,
+console.log("request " + request);
 
-method: method,
+console.log("request object is"+ JSON.stringify(event.body));
 
-headers: headers,
+let appId = event.body.appId;
 
-port: 443,
+console.log("APP ID before", appId);
 
-timeout: 300000,
+let host = process.env.CREATE_AND_UPLOAD_API_HOST;
+
+console.log(host);
+
+let methodType = "POST";
+
+await scanAppTable (appId)
+
+.then (async (userdata) => {
+
+console.log("APP ID", appId);
+
+console.log("userdata", userdata);
+
+if (userdata.Items.length >= 1) {
+ console.log("inside if userdata");
+
+let apeId = userdata.Items[0].APE_ID;
+
+let additionalData = userdata.Items[0].ADDITIONAL_DATA;
+
+let fileobj = await s3Service.getDocumentRecords (appId);
+ let pdfRequestData = { ...JSON.parse(additionalData), ...fileObj};
+
+console.log("Your request for PDF", pdfRequestData);
+
+let createPDFApi = process.env.CREATE_AND_UPLOAD_CRAETEPDF_API_PATH;
+
+let pdfHeaders = {
+
+"Content-Type": "application/json",
+
+"x-hsbc-client-id": process.env.CLIENT_ID,
+
+"x-hsbc-client-secret": process.env.CLIENT_SECRET,
 
 };
 
-const req = https.request (options, (res) => {
+console.log("creating pdf request");
 
-if (res.statusCode < 200 || res.statusCode >= 300) {
+console.log(JSON.stringify (pdfRequestData));
 
-console.log("http response==> ", res);
+console.log({
 
-return reject (new Error("statusCode=" + res.statusCode));
+host,
 
-}
+createPDFApi,
 
-var body =[];
+pdfHeaders,
 
-res.on("data", function (chunk) {
+methodType,
 
-body.push(chunk);
-
-});
-
-res.on("end", function () {
-
-try {
-
-console.log("api response code is");
-
-console.log(res.statusCode);
-
-console.log("printing response body for test");
-
-console.log (body);
-
-body = JSON.parse(Buffer.concat(body).toString());
-
-} catch (e) {
-
-reject (e);
-
-}
-
-resolve (body);
+req: JSON.stringify(pdfRequestData),
 
 });
 
+await customHttpsRequest
+
+.createHttpsRequestPromise(
+
+host,
+
+createPDFApi,
+
+pdfHeaders,
+
+methodType,
+
+JSON.stringify (pdfRequestData),
+
+)
+
+.then (async (pdfApiResponse) => {
+
+if (pdfApiResponse.data !== undefined && pdfApiResponse.data) {
+ console.log("started saving Credit Card Application Form") ;
+ let obj = {
+
+appId: pdfApiResponse.appid,
+
+docName: "CreditCardApplicationForm",
+
+fileData: pdfApiResponse.data,
+
+fileName: pdfApiResponse.fileName,
+
+fileType: pdfApiResponse.fileType,
+
+};
+
+console.log("Request Obj", obj);
+
+savePdfS3Service.uploadFormPDF(obj);
+
+console.log("Save complete for Credit Card Application Form ");
+
+let fullAppPdf = {
+
+docType: pdfApiResponse.fileType,
+
+fileName: pdfApiResponse.fileName,
+ docName: "CreditCardApplicationForm",
+
+imagePreviewUrl: pdfApiResponse.data,
+
+};
+
+let fileNetRequest = {
+
+appDetails: additionalData,
+
+apeId: apeId,
+
+fileObj: fullAppPdf,
+
+};
+
+let docUploadRequest = docUplod.docUploadRecords (fileNetRequest);
+ console.log("fileNetRequest length:", docUploadRequest.length);
+let filenetApi = process.env.CREATE_AND_UPLOAD_UPLOAD_API_PATH;
+let filenetHeaders = {
+
+"Content-Type": "application/json",
+
+"x-hsbc-client-id": process.env.CLIENT_ID,
+
+"x-hsbc-client-secret": process.env.CLIENT_SECRET,
+
+};
+
+await customHttpsRequest
+
+.createHttpsRequestPromise(
+
+host,
+
+filenetApi,
+
+filenetHeaders,
+
+methodType,
+
+docUploadRequest,
+
+)
+
+.then((data) => {
+
+console.log("upload success");
+
+callback(null, {
+
+statusCode: 200,
+
+body: JSON.stringify({
+
+status: "ok",
+
+}),
+
+headers: responseHeaders,
+
 });
 
-req.on("error", (e) => {
+var BACKENDAPI_STATUS = "Successful";
 
-reject (e.message);
+var paramBackendStatus = {
 
-});
+TableName: "APP_DETAILS",
 
-if (requestData) req.write(requestData) ;
- // send the request
+Key: { APP_ID: appId },
 
-req.end();
+UpdateExpression:
 
-});
+"SET BACKENDAPI_STATUS = :backendAPIStatus",
+
+ExpressionAttributeValues: {
+
+":backendAPIStatus": BACKENDAPI_STATUS,
 
 },
+
+ReturnValues: "ALL_NEW",
+
+};
+
+console.log("Updating record for " + appId);
+
+databaseClient
+
+.updateRecordForApe(paramBackendStatus)
+
+.then(async (dbUpdateResponse) => {
+
+console.log("dbUpdateResponse: ", dbUpdateResponse);
+
+});
+
+})
+
+.catch((e) => {
+
+console.log("catch0 error: e ", e);
+
+errorResponse(
+
+JSON.stringify(e),
+
+context.awsRequestId,
+
+callback,
+
+);
+
+})
+
+} else {
+
+errorResponse(
+
+"Error in Reading Pdf Api Response",
+
+context.awsRequestId,
+
+callback,
+
+);
+
+}
+
+})
+
+.catch((e) => {
+
+console.log("catch1 error: e ", e);
+
+errorResponse(JSON.stringify(e), context.awsRequestId, callback);
+
+});
+
+} else {
+
+console.log("catch2 error: e ");
+
+errorResponse(JSON.stringify(e), context.awsRequestId, callback);
+
+}
+
+});
+
+};
+
+function errorResponse(errorMessage, awsRequestId, callback) {
+
+callback(null, {
+
+statusCode: 500,
+
+body: JSON.stringify({
+
+Error: errorMessage,
+
+Reference: awsRequestId,
+
+}),
+
+headers: responseHeaders,
+
+});
+
+}
+
+function scanAppTable (appId) {
+
+console.log("scanAppTable ", appId);
+
+var params = {
+
+TableName: "APP_DETAILS",
+
+KeyConditionExpression: "#appId = :appId",
+
+ExpressionAttributeNames: {
+
+"#appId": "APP_ID",
+
+},
+
+ExpressionAttributeValues: {
+
+":appId": appId,
+
+},
+
+};
+
+return ddb.query(params).promise();
+
+}
+
+const responseHeaders = {
+
+"Access-Control-Allow-Origin": process.env.CORS_ORIGIN,
+
+"Strict-Transport-Security": "max-age=16070400; includeSubDomains",
+
+"X-Content-Type-Options": "nosniff",
+
+"X-XSS-Protection": "1; mode=block",
+
+"Content-Security-Policy": "default-src 'self'",
 
 };
