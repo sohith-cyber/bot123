@@ -1,165 +1,248 @@
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+//Staff Channel
 
-const lambda = new LambdaClient({});
-const dbClient = new DynamoDBClient({});
-const myDocumentClient = DynamoDBDocumentClient.from(dbClient);
+JavaScript file
 
-export const handler = async (event, context) => {
-    let responseBody = null;
-    let responseFinal = null;
+module.exports = {
 
-    try {
-        const eventNew = JSON.parse(event.body);
-        let { staffId, key } = eventNew;
+docUploadRecords: function (docUploadRequest) {
 
-        let role = null;
-        let channelId = null;
-        let ddbStaffMappingList = [];
+console.log("docUploadRequest", docUploadRequest);
 
-        // Validate event body and key
-        if (!event.body || key === undefined) {
-            responseBody = {
-                respType: "000",
-                response: "Invalid request: Missing event body or key.",
-            };
-            return setResponseFinal(responseBody);
-        }
+let req = docUploadRequest.appDetails;
 
-        // Get Staff Details from Lambda
-        const paramsStaff = {
-            FunctionName: "getStaffDetailsLMS",
-            InvocationType: "RequestResponse",
-            LogType: "Tail",
-            Payload: JSON.stringify(staffId),
-        };
+let uploadReq =JSON.parse(req);
 
-        const lambdaResponse = await lambda.send(new InvokeCommand(paramsStaff));
-        const dataItems = JSON.parse(Buffer.from(lambdaResponse.Payload).toString());
-        const resp = JSON.parse(dataItems.body);
+console.log("uploadReg: ", uploadReq);
 
-        if (!resp.response || !resp.response.isExist) {
-            responseBody = {
-                respType: "000",
-                response: "Agent does not exist. Please add agent before proceeding",
-            };
-            return setResponseFinal(responseBody);
-        }
+let custName = uploadReq.personalDetails.customerName;
+ let apeId;
 
-        role = resp.response.role;
-        staffId = resp.response.stfId;
-        channelId = resp.response.channelId;
-        const rangeDate = new Date(new Date().setDate(new Date().getDate() - 90));
-        const dateString = rangeDate.toISOString();
+if (typeof docUploadRequest.apeId !== "string") {
+ apeId =JSON.stringify(docUploadRequest.apeId);
 
-        // Determine search based on role
-        if (role === "TM") {
-            ddbStaffMappingList = [{ STF_ID: staffId }];
-        } else if (role === "TL") {
-            let lastEvaluatedKey;
-            do {
-                const getStaffList = {
-                    TableName: "STF_MAPPING",
-                    IndexName: "MGR_ID-index",
-                    KeyConditionExpression: "#MGR_ID = :staffId",
-                    ExpressionAttributeNames: { "#MGR_ID": "MGR_ID" },
-                    ExpressionAttributeValues: { ":staffId": staffId },
-                    ProjectionExpression: "STF_ID",
-                    ExclusiveStartKey: lastEvaluatedKey,
-                };
-                const data = await myDocumentClient.send(new QueryCommand(getStaffList));
-                data.Items.forEach(itemData => ddbStaffMappingList.push(itemData));
-                lastEvaluatedKey = data.LastEvaluatedKey;
-            } while (lastEvaluatedKey);
-            ddbStaffMappingList.push({ STF_ID: staffId }); // Include the TL themselves
-        } else if (role === "CM") {
-            let lastEvaluatedKey;
-            do {
-                const getStaffList = {
-                    TableName: "STF_MAPPING",
-                    IndexName: "CHANNEL_ID-index",
-                    KeyConditionExpression: "CHANNEL_ID = :channelId",
-                    FilterExpression: "#Staff_Role = :TM OR #Staff_Role = :TL",
-                    ExpressionAttributeNames: { "#Staff_Role": "ROLE" },
-                    ExpressionAttributeValues: {
-                        ":channelId": channelId,
-                        ":TM": "TM",
-                        ":TL": "TL",
-                    },
-                    ProjectionExpression: "STF_ID",
-                    ExclusiveStartKey: lastEvaluatedKey,
-                };
-                const data = await myDocumentClient.send(new QueryCommand(getStaffList));
-                data.Items.forEach(itemData => ddbStaffMappingList.push(itemData));
-                lastEvaluatedKey = data.LastEvaluatedKey;
-            } while (lastEvaluatedKey);
-        } else if (role === "PU") {
-            let lastEvaluatedKey;
-            do {
-                const getStaffList = {
-                    TableName: "CHNL_MAPPING",
-                    ProjectionExpression: "CHANNEL_ID",
-                    ExclusiveStartKey: lastEvaluatedKey,
-                };
-                const data = await myDocumentClient.send(new ScanCommand(getStaffList));
-                data.Items.forEach(itemData => ddbStaffMappingList.push(itemData));
-                lastEvaluatedKey = data.LastEvaluatedKey;
-            } while (lastEvaluatedKey);
-        } else {
-            responseBody = {
-                respType: "000",
-                response: "Role is not authorized to perform any action.",
-            };
-            return setResponseFinal(responseBody);
-        }
+} else {
 
-        // Call SearchAppDetailsLambdaLMS Lambda
-        const eventQueryAppDetails = {
-            ddbStaffMappingList: ddbStaffMappingList,
-            staffId: staffId,
-            dateString: dateString,
-            channelId: channelId,
-            role: role,
-            searchKey: key,
-        };
+apeId = docUploadRequest.apeId;
 
-        const searchParams = {
-            FunctionName: "SearchAppDetailsLambdaLMS",
-            InvocationType: "RequestResponse",
-            LogType: "Tail",
-            Payload: JSON.stringify(eventQueryAppDetails),
-        };
+console.log("apeId: ", apeId);
 
-        const searchLambdaResponse = await lambda.send(new InvokeCommand(searchParams));
-        const appData = JSON.parse(Buffer.from(searchLambdaResponse.Payload).toString());
+const docType = uploadReq.personalDetails.idDetails.idType;
+ const customerName = custName.firstName + " " + custName.lastName;
 
-        responseBody = {
-            respType: "001",
-            response: "Success",
-            role: role,
-            appData: appData,
-        };
-        responseFinal = setResponseFinal(responseBody);
-        return responseFinal;
+const idNumber = uploadReq.personalDetails.idDetails.idNumber;
+ const formattedDt = getFormattedDate (uploadReq.personalDetails.dateofbirth);
 
-    } catch (err) {
-        console.error("Error:", err);
-        return {
-            statusCode: 500,
-            headers: { "Access-Control-Allow-Origin": "*" },
-            body: JSON.stringify({ message: "An internal server error occurred.", error: err.message }),
-            isBase64Encoded: false,
-        };
-    }
-};
+console.log("fileObj", docUploadRequest.fileObj);
 
-// Common function for setting final response format
-function setResponseFinal(responseBody) {
-    return {
-        statusCode: 200,
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify(responseBody),
-        isBase64Encoded: false,
-    };
+let fileObj = docUploadRequest.fileObj;
+
+let documentFileName = fileObj.docName;
+
+const documentContent = fileObj.imagePreviewUrl;
+
+const documentContentLength = documentContent.length;
+console.log("documentFileName:", documentFileName);
+
+console.log("documentContent", documentContent);
+
+console.log("documentContentLength: ", documentContentLength);
+
+let todayDate = new Date().toISOString();
+
+console.log("todayDate: ", todayDate);
+
+let dateTime =
+
+todayDate.substring(0, 4) +
+
+todayDate.substring(5, 7) +
+
+todayDate.substring(8, 10) +
+
+todayDate.substring(11, 13) +
+
+todayDate.substring(14, 16) +
+
+todayDate.substring(17, 19) +
+
+todayDate.substring(20, 23);
+
+console.log("dateTime:", dateTime);
+
+console.log("uploadReq.staffId", uploadReq.staffId);
+
+console.log("uploadReq channelId:", uploadReq.channelId);
+
+if (uploadReq.staffId && uploadReq.channelId) {
+
+console.log("check if is called ");
+
+if (uploadReq.channelId === "MSF") {
+
+console.log("check if channel is MSF ");
+
+if (uploadReq.tuInfo.applicationId) {
+
+documentFileName =
+
+"Sales" +
+
+uploadReq.tuInfo.applicationId +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+
+} else {
+
+documentFileName =
+
+"Sales" +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+} else {
+
+if (uploadReq.tuInfo.applicationId) {
+
+documentFileName =
+
+"Branch_" +
+
+uploadReq.tuInfo.applicationId +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+
+} else {
+
+documentFileName =
+
+"Branch" +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+
 }
+
+}
+
+} else {
+
+if (uploadReq.tuInfo.applicationId) {
+
+documentFileName =
+
+"Online" +
+
+uploadReq.tuInfo.applicationId +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+
+} else {
+
+documentFileName =
+
+"Online" +
+
+uploadReq.appId +
+
+uploadReq.personalDetails.idDetails.idNumber +
+
+dateTime;
+}
+
+}
+
+console.log("pdfName: ", documentFileName);
+
+var fileNetRequest =JSON.parse({
+
+consumerName: "PHRK",
+
+businessCountry: "PH",
+
+objectStoreName: "MNL",
+
+docProperty: [
+
+{
+
+propertyName: "DocumentType",
+
+dataType: "String",
+
+stringValue: "OTHE",
+
+},
+
+{
+
+propertyName: "IDValue",
+ dataType: "String",
+
+stringValue: apeId,
+
+},
+{
+ propertyName: "OtherReference",
+ dataType: "String",
+ stringValue: customerName,
+},
+{
+ propertyName: "OtherReference2",
+ dataType: "String",
+ stringValue: formattedDt,
+},
+{
+ propertyName: "OtherReference3",
+ dataType: "String",
+ stringValue: idNumber,
+},
+
+],
+
+docContent: {
+
+documentMIMEType: "application/pdf",
+
+documentFileName: documentFileName,
+
+inlineDocument: {
+
+documentContentLength: documentContentLength,
+
+documentContent: documentContent,
+
+},
+
+},
+
+});
+
+return fileNetRequest;
+
+},
+
+const getFormattedDate = (value) => {
+ let year = value.substring(0, 4);
+ let day = value.substring(8, 10);
+let month = value.substring(5, 7) ;
+ return day + month + year;
+
+};
