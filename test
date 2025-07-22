@@ -1,52 +1,99 @@
-const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, UpdateCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb"); // Import commands for SDK v3
+Common Lambda Functions: 40
+deployLambda
+keyEncryption
+purgeApplications
+retrieve-application-data
+retrieveRecordId
+SSOTOJwtTokenAPI
+sendReminderEvents
+submitAPEapplication
+keyDecryption
+saveAppData
+sendEmail
+getapps2
+getleadapps_latest
+assignLeadAppLMS
+SearchAppDetailsLambdaLMS
+fetchRoleLMS
+appDataAuthLMS
+updateRemarksLMS
+updateApplicationStaffLMS
+updateAppLMS
+getStaffDetailsLMS
+addStaffLMS
+checkHasSubStaffLMS
+checkAppExistsLMS
+QueryAppDetailsLMS
+getStaffMappingLMS
+getChannelMapLMS
+searchAppsLMS
+checkStaffExists
+QueryAppDetails2
+updateManagerLMS
+fetchExistingRemarksLMS
+getUnassignedSummary
+getUnassignedStatusCount
+getApps
+staffLeadStatusLMS
+removeStaffLMS
+checkStaffHasApps
+transferAppLMS (treating transferAPPLMS as this)
+createAndUploadPdf
+Unique to CBH (SRI LANKA) Functions (Count: 25)
 
-// Initialize DynamoDB Document Client for SDK v3
-const ddbClient = new DynamoDBClient({ region: process.env.AWS_REGION || "eu-west-1" }); // Use AWS_REGION environment variable
-const ddb = DynamoDBDocumentClient.from(ddbClient);
+These functions appear only in the CBH (SRI LANKA) list:
 
-module.exports = {
-  updateRecordForApe: async function (params) { // Changed to async function, removed callback
-    try {
-      // Use SDK v3 UpdateCommand
-      const data = await ddb.send(new UpdateCommand(params));
-      console.log("DATA in update:", data);
-      console.log("UpdateItem succeeded:", stringify(data));
-      return { statusCode: 200, body: stringify(data) };
-    } catch (err) {
-      console.error("Error updating record:", err);
-      // Construct a more descriptive error message
-      const errorMessage = `Could not create message: ${err.message || JSON.stringify(err)}`;
-      throw {
-        statusCode: 400,
-        error: errorMessage,
-      };
-    }
-  },
-  queryRecordForApe: async function (params) { // Changed to async function, removed callback
-    try {
-      // Use SDK v3 QueryCommand
-      const data = await ddb.send(new QueryCommand(params));
-      console.log("DATA in query:", data);
-      console.log("QueryItem succeeded:", stringify(data, null, 2));
-      return { statusCode: 200, body: stringify(data, null, 2) };
-    } catch (err) {
-      console.error("Error querying record:", err);
-      // Construct a more descriptive error message
-      const errorMessage = `Could not create message: ${err.message || JSON.stringify(err)}`;
-      throw {
-        statusCode: 400,
-        error: errorMessage,
-      };
-    }
-  },
-};
+listAllTeamLeadersLMS
+fileuploadservice
+storeWSDetails
+docUploadToFileNet
+retrieve-crib-info
+filedownloadservice
+sendOtpSecureService
+listAllTeamMembersLMS
+sendotpApi
+updateAPEapplication
+onConnect
+createAPEapplication
+verifyOtpApi
+optStatusApi
+cbhAppAuthorizer
+onDisconnect
+cbhAppWebSocketAuthorizer
+sendSMS
+validateReferralId
+autoscalinggrouppolicy
+create-fullApp-form-pdf
+restDRN
+getAssignedSummaryLMS
+get-crib-info
+get-crib-info-webhook
+Unique to MNL (PHILIPPINES) Functions (Count: 25)
 
-function stringify(value) {
-  if (value === undefined) {
-    return JSON.stringify(value);
-  }
-  return JSON.stringify(value, (k, v) =>
-    typeof v === "bigint" ? v.toString() : v
-  );
-}
+These functions appear only in the MNL (PHILIPPINES) list:
+
+saveUpdateAfis
+verifyOtpService
+prodConnectivityTest
+retrieveJumioStatus
+verifyOtpV2
+retrieveJumioImages
+sendSms
+recordDuplicateCheck
+findJumioClassifier
+otpStatusService
+initiateJumio
+getTUafterKyc
+testParseIssue
+findJumioData
+testDRN
+sendOtpService
+getScoreAfis
+saveAppDataAuth
+SnsToAlertAPI
+retrieveJumioDocDetails
+privateapiauth
+autoscalingpolicyrun
+getTUInformationService
+deleteCompletedDeclinedDIPDeclined
+updateStaffIDAppDetails
