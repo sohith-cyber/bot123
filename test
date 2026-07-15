@@ -1,129 +1,15 @@
-Project Explanation: Using Conditional GAN For Facial Recognition EnhancementThis is an academic research project authored by T. Pruthviraj Singh (MITS, Madanapalle), T. Mahima Singh (Amrita Vishwa Vidyapeetham, Chennai), and Deepak Kumar G (MITS, Madanapalle). It sits at the intersection of deep learning, computer vision, and forensic science — using Conditional Generative Adversarial Networks (CGANs) to transform hand-drawn eyewitness sketches into photo-realistic facial images that can help police identify suspects.Here is a detailed breakdown of every major aspect of the project.🎯 1. The Problem & MotivationTraditional criminal investigations rely heavily on forensic sketch artists who draw a suspect based on an eyewitness's memory. This process has several critical weaknesses:Human subjectivity — sketches depend on the artist's skill and the witness's ability to recall subtle details.Missing lifelike features — skin texture, moles, scars, skin tone, and micro-contours are almost always lost.Feature-matching-only software — most existing law-enforcement tools just measure geometric distances (eye-to-nose, jaw width, etc.) and search a sketch database. They do not synthesize a new photo.Poor public usability — a grayscale pencil sketch is far less recognizable on social media or CCTV cross-referencing than a colored, realistic face.Time-critical investigations — manual sketching is slow, and delays give suspects time to escape.The motivation is therefore to bridge the gap between forensic sketching and digital reconstruction using deep learning, producing a lifelike colored image that can be circulated on social media and news channels for faster identification.🧠 2. Why Conditional GANs (and Not Just GANs)?A standard GAN generates random images from noise — useful, but uncontrolled. If you asked a plain GAN to "generate a face," it would give you any face.A Conditional GAN (CGAN) adds a condition (in this case, the input sketch itself, plus attribute labels). This forces the generator to produce a face that strictly obeys the features of the given sketch — same jawline, same eye placement, same hair pattern — but rendered as a photorealistic color image.This "condition" is exactly what makes CGANs suitable for sketch-to-photo translation instead of random face synthesis.CGAN Sketch-to-Photo Architecture
+Our project uses a Conditional Generative Adversarial Network to convert witness sketches into realistic facial images. The system contains two neural networks: a generator and a discriminator. The generator uses an encoder–decoder architecture. The encoder extracts important facial features from the witness sketch and converts them into a latent representation. Conditional information can be added to guide image generation. The decoder reconstructs these features into a realistic color facial image. The discriminator is a CNN that compares generated images with real facial images and predicts whether they are real or fake. During training, adversarial loss improves realism, while pixel and SSIM-based losses preserve similarity to the corresponding real face. After training, the generator is deployed using Streamlit, allowing users to upload a sketch and generate a realistic facial representation in real time.
 
-🏗️ 3. System Architecture in Detail
+This project uses a Conditional GAN to learn the relationship between facial sketches and real photographs, then generates a realistic face from a new witness sketch using an encoder–decoder generator and a CNN-based discriminator.
 
-The system has two neural networks locked in an adversarial game, plus a preprocessing and deployment layer.
+I started learning and building projects using LangChain, LangGraph, LangSmith, and RAG.
 
-🔵 The Generator — Encoder–Decoder Network
-- Encoder: Takes the input sketch (256×256) plus conditional information (attributes/labels) and compresses it down into a latent representation — essentially a compact numerical fingerprint of the sketch's structural features.
-- Decoder: Takes that latent representation and progressively upsamples it back into a full-color, photo-realistic 256×256 face. This is where textures, skin tones, shading, and lifelike details are synthesized — features that were never explicitly drawn in the sketch.
+Currently, I'm building a personal project called a GitHub Repository Assistant. The idea is to let developers interact with GitHub repositories using natural language. Users can ask questions like summarizing a repository, understanding the project structure, finding issues, or generating pull request descriptions.
 
-🟠 The Discriminator — CNN-based Classifier
-- A Convolutional Neural Network that inspects both real photographs (from the training set) and fake photos (from the Generator).
-- Extracts hierarchical features — edges → shapes → facial parts → global identity — using convolution, normalization, and pooling.
-- Outputs a real/fake probability, which becomes the training signal for the Generator.
+The application uses a RAG pipeline. I load repository documents like README files and Markdown documentation using LangChain document loaders, split them into chunks, generate embeddings, and store them in ChromaDB. When a user asks a question, the retriever fetches the most relevant information, and the LLM generates a response based on that context to reduce hallucinations.
 
-🔁 The Adversarial Loop
-1. Initialization — both networks start with random weights.
-2. Forward pass — Generator produces a fake face from the sketch + noise + condition.
-3. Evaluation — Discriminator classifies the fake face vs. real face.
-4. Backpropagation — gradients flow back through both networks; the Generator learns to fool the Discriminator, and the Discriminator learns to catch fakes more accurately.
-5. Repeat over many epochs until the Generator produces images the Discriminator can no longer reliably distinguish from real photos.
+I also experimented with multi-source RAG by retrieving information from sources like Wikipedia, Arxiv, local PDFs, and repository documentation to improve response quality.
 
-📊 4. Data & Preprocessing
+For orchestration, I used LangGraph because it supports stateful workflows with memory, conditional routing, tool calling, and human-in-the-loop approvals. I integrated a GitHub MCP server so the agent can safely interact with GitHub tools, such as searching issues or drafting pull requests, with user confirmation before performing sensitive actions.
 
-Datasets used:
-- The Google Sketch dataset as the primary source of sketch–photo pairs.
-- A diverse collection of real facial images with varying poses, lighting, occlusions, and image quality — used to make the model robust to real-world conditions.
-
-Preprocessing pipeline:
-1. Normalization of pixel values to a standard range for stable training.
-2. Resizing every image to 256×256 to match the model's expected input.
-3. Data augmentation — random transformations (flip, rotate, brightness shift, etc.) on both sketches and photos to expand dataset variability and prevent overfitting.
-4. Conditional attribute integration — attaching class labels and attribute vectors to the training pipeline so the Generator learns what to draw, not just how.
-5. Data splitting into training / validation / testing subsets.
-6. Natural filename sorting and loading into NumPy arrays for batch processing.
-
-⚙️ 5. Training Setup
-
-| Aspect | Details from the paper |
-|---|---|
-| Input resolution | 256×256 |
-| Optimizers | Adam (dynamic learning-rate adaptation, fast convergence) + SGD (computational efficiency on data subsets) |
-| Loss functions | Adversarial loss (GAN), Pixel loss (pixel-level accuracy), Contextual loss (structural/semantic understanding) — with tunable weighting |
-| Epochs / Batch size / Learning rate | Trained over "multiple epochs" using "augmented data batches"; specific numerical values are not disclosed in the paper |
-| Framework | Iterative forward–backward pass loop |
-| Deployment | Streamlit web application for real-time inference |
-
-📈 6. Evaluation Metrics
-
-The paper evaluates image quality using two complementary metrics:
-
-- L2-norm — the mean squared pixel difference between the generated face and the ground-truth photo. Lower = closer at the pixel level.
-- SSIM (Structural Similarity Index) — a perceptual metric that compares luminance, contrast, and structure. Higher = more visually similar in terms of facial structure.
-
-The authors also experiment with different weightings of pixel loss vs. contextual loss to find the sweet spot between raw pixel accuracy and holistic image quality. The paper includes:
-- Fig. 6 — Generator Loss Graph over epochs
-- Fig. 7 — Discriminator Loss Graph over epochs
-- Fig. 2, 4, 5 — visual comparisons of original sketch → generated photo
-
-⚠️ Note: The paper displays these results visually but does not publish exact numerical L2/SSIM values in the text.
-
-📚 7. Literature Review — What the Authors Build On
-
-The related-work section positions the paper against several strands of prior research:
-
-- Deep learning in law enforcement — B. Gong et al. on how ML affects crime and policing.
-- Foundational CNN architectures — K. He et al. on ResNets for image recognition.
-- Face recognition surveys — O. M. Parkhi et al., J. Deng et al.
-- Conditional GANs — M. Mirza & S. Osindero (the original CGAN paper).
-- Image super-resolution — SRGAN by X. Mao et al.
-- Facial attribute manipulation — Y. Guo et al. (facial aging), Y. Liu et al. (landmark detection, pose estimation).
-- General GAN advancements — Shrivastava et al.
-- Bias in face recognition — J. Yan et al. on gender bias mitigation.
-
-The gap the authors identify: existing systems match sketches; they do not synthesize photos. This project fills that gap.
-
-🌟 8. How This Project Improves on Existing Methods
-
-| Traditional Method | This Project's Approach |
-|---|---|
-| Manual pencil sketches by artists | AI-generated photorealistic color faces |
-| Feature matching against sketch databases | Image synthesis — creates new, unseen photorealistic outputs |
-| Grayscale sketch (hard to circulate publicly) | Colored photo (usable on social media, news, CCTV cross-referencing) |
-| Slow, subjective, artist-dependent | Real-time via a Streamlit web app |
-| Loses texture, skin marks, micro-details | Learns and hallucinates realistic textures via decoder |
-| No robustness to poses/lighting | Data augmentation improves generalization |
-| Only pixel-level comparison | Combines L2-norm + SSIM + contextual loss for holistic quality |
-
-💻 9. Real-World Application — The Streamlit Web App
-
-The trained model is deployed as an interactive web application built with Streamlit:
-
-- User uploads a sketch (JPG, JPEG, or PNG).
-- The app automatically resizes it to 256×256.
-- The CGAN Generator runs inference in real time.
-- The synthesized photorealistic face is displayed alongside the input sketch for comparison.
-
-This turns the research into a field-usable tool for investigators — no ML expertise required by the end user.
-
-🔮 10. Conclusions & Future Work
-
-Conclusions
-- CGANs significantly outperform traditional feature-matching approaches for forensic sketch translation.
-- The encoder–decoder Generator + CNN Discriminator + dual optimizer (Adam + SGD) design successfully synthesizes structurally faithful, texture-rich color faces.
-- Real-time deployment via Streamlit makes the pipeline practical for real investigations.
-- The paper also touches on secure cloud-based data sharing (encryption + access control) for collaborative forensic environments.
-
-Future Work
-- Ethical framework for using AI-generated faces as forensic evidence — extremely important given the risk of wrongful identification.
-- Continuous monitoring for adversarial robustness and emerging security threats.
-- Stronger cloud-security measures for handling sensitive suspect data.
-
-🧭 Overall Assessment
-
-This project is a solid application of conditional generative modeling to a socially impactful forensic problem. Its main strengths are:
-
-- ✅ Clear real-world use case with tangible benefit to law enforcement
-- ✅ Correct architectural choice (CGAN > vanilla GAN for this task)
-- ✅ End-to-end pipeline — from data preprocessing all the way to a deployed Streamlit app
-- ✅ Dual-loss evaluation (pixel + structural) is more rigorous than pixel-only
-
-Areas where the paper could be stronger:
-
-- ⚠️ No published numerical L2-norm / SSIM scores or quantitative comparisons against baseline models
-- ⚠️ Hyperparameters (epoch count, batch size, learning rate values) are not disclosed
-- ⚠️ Ethical implications — especially the risk of hallucinated features leading to wrongful arrests — are acknowledged but not deeply analyzed
-- ⚠️ The exact loss-function formulas (e.g., cGAN loss, L1 vs. L2 pixel loss) are not written out
-
-Would you like me to go deeper on any specific part — for example, derive the CGAN loss functions mathematically, suggest improvements to the architecture, help you prepare presentation slides from this paper, or draft a critique/review for peer evaluation?
+I also implemented conversational memory using MemorySaver and used streaming and async streaming to provide real-time responses. During development, I used LangSmith to trace executions, debug workflows, and monitor the agent's behavior
