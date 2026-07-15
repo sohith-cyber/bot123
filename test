@@ -1,15 +1,2 @@
-Our project uses a Conditional Generative Adversarial Network to convert witness sketches into realistic facial images. The system contains two neural networks: a generator and a discriminator. The generator uses an encoder–decoder architecture. The encoder extracts important facial features from the witness sketch and converts them into a latent representation. Conditional information can be added to guide image generation. The decoder reconstructs these features into a realistic color facial image. The discriminator is a CNN that compares generated images with real facial images and predicts whether they are real or fake. During training, adversarial loss improves realism, while pixel and SSIM-based losses preserve similarity to the corresponding real face. After training, the generator is deployed using Streamlit, allowing users to upload a sketch and generate a realistic facial representation in real time.
-
-This project uses a Conditional GAN to learn the relationship between facial sketches and real photographs, then generates a realistic face from a new witness sketch using an encoder–decoder generator and a CNN-based discriminator.
-
-I started learning and building projects using LangChain, LangGraph, LangSmith, and RAG.
-
-Currently, I'm building a personal project called a GitHub Repository Assistant. The idea is to let developers interact with GitHub repositories using natural language. Users can ask questions like summarizing a repository, understanding the project structure, finding issues, or generating pull request descriptions.
-
-The application uses a RAG pipeline. I load repository documents like README files and Markdown documentation using LangChain document loaders, split them into chunks, generate embeddings, and store them in ChromaDB. When a user asks a question, the retriever fetches the most relevant information, and the LLM generates a response based on that context to reduce hallucinations.
-
-I also experimented with multi-source RAG by retrieving information from sources like Wikipedia, Arxiv, local PDFs, and repository documentation to improve response quality.
-
-For orchestration, I used LangGraph because it supports stateful workflows with memory, conditional routing, tool calling, and human-in-the-loop approvals. I integrated a GitHub MCP server so the agent can safely interact with GitHub tools, such as searching issues or drafting pull requests, with user confirmation before performing sensitive actions.
-
-I also implemented conversational memory using MemorySaver and used streaming and async streaming to provide real-time responses. During development, I used LangSmith to trace executions, debug workflows, and monitor the agent's behavior
+I developed a Research Assistant using a RAG pipeline, deployed through Streamlit. I used LangChain to integrate multiple knowledge sources, including the Wikipedia API Wrapper, ArXiv API Wrapper, and WebBaseLoader, which allows users to provide a webpage URL and load its content for question answering.
+For the RAG flow, the loaded web content is split into chunks, converted into vector embeddings using Ollama Embeddings (open-source), and stored in ChromaDB for semantic retrieval. When a user asks a question, the relevant chunks are retrieved and passed as context to Gemini 2.5 Flash through OpenRouter to generate a context-aware response. The application can also use Wikipedia and ArXiv as tools to retrieve additional research information.
